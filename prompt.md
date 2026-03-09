@@ -1,0 +1,1 @@
+The characters are too small right now. Let's make the art a lot better, the wizards has to be holding a book, and a wand. for the movements, we have to move it by pressing the right button of the mouse in the map, not by arrows. also, there should be an hitbox marking for the powers, just like in league of legends, so i can see the range of the skills.
