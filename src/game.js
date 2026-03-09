@@ -38,7 +38,7 @@ function createMage(id, label, x, y, robeColor, glowColor, isEnemy = false) {
       ? {
           strafeSign: 1,
           strafeTimer: 0.75,
-          decisionTimer: 0.6,
+          decisionTimer: 0.85,
         }
       : null,
   };
@@ -119,12 +119,12 @@ function getSpellTargetPoint(caster, spellName, targetPoint) {
   return clampPointToDistance(caster.x, caster.y, targetPoint.x, targetPoint.y, spell.range);
 }
 
-function predictTargetPoint(source, target, projectileSpeed) {
+function predictTargetPoint(source, target, projectileSpeed, leadFactor = 0.45) {
   const gap = distance(source.x, source.y, target.x, target.y);
   const travelTime = gap / projectileSpeed;
   return {
-    x: target.x + target.vx * travelTime * 0.45,
-    y: target.y + target.vy * travelTime * 0.45,
+    x: target.x + target.vx * travelTime * leadFactor,
+    y: target.y + target.vy * travelTime * leadFactor,
   };
 }
 
@@ -329,10 +329,10 @@ function updateEnemy(game, dt) {
     let moveX = 0;
     let moveY = 0;
 
-    if (range > 116) {
+    if (range > 128) {
       moveX = direction.x;
       moveY = direction.y;
-    } else if (range < 84) {
+    } else if (range < 96) {
       moveX = -direction.x;
       moveY = -direction.y;
     } else {
@@ -348,15 +348,17 @@ function updateEnemy(game, dt) {
     applyMovement(enemy, moveX, moveY, dt);
 
     if (enemy.ai.decisionTimer <= 0) {
-      const aimedPoint = predictTargetPoint(enemy, player, SPELLS.fireball.speed);
-      const stunPoint = predictTargetPoint(enemy, player, SPELLS.stunShot.speed);
+      const aimedPoint = predictTargetPoint(enemy, player, SPELLS.fireball.speed, 0.18);
+      const stunPoint = predictTargetPoint(enemy, player, SPELLS.stunShot.speed, 0.08);
+      const thunderScatterX = (pseudoRandom(game.time * 19 + enemy.health) - 0.5) * 14;
+      const thunderScatterY = (pseudoRandom(game.time * 23 + enemy.health) - 0.5) * 14;
 
-      if (enemy.cooldowns.speedBoost <= 0 && (range > 142 || enemy.health < 38)) {
+      if (enemy.cooldowns.speedBoost <= 0 && (range > 156 || enemy.health < 30)) {
         tryCast(game, enemy, "speedBoost", aimedPoint);
-      } else if (enemy.cooldowns.thunderStrike <= 0 && range < 155) {
+      } else if (enemy.cooldowns.thunderStrike <= 0 && range < 142) {
         tryCast(game, enemy, "thunderStrike", {
-          x: player.x + player.vx * 0.2,
-          y: player.y + player.vy * 0.2,
+          x: player.x + player.vx * 0.08 + thunderScatterX,
+          y: player.y + player.vy * 0.08 + thunderScatterY,
         });
       } else if (enemy.cooldowns.stunShot <= 0 && player.stunTimer < 0.25) {
         tryCast(game, enemy, "stunShot", stunPoint);
@@ -364,7 +366,7 @@ function updateEnemy(game, dt) {
         tryCast(game, enemy, "fireball", aimedPoint);
       }
 
-      enemy.ai.decisionTimer = 0.3 + pseudoRandom(game.time * 7 + enemy.health) * 0.15;
+      enemy.ai.decisionTimer = 0.52 + pseudoRandom(game.time * 7 + enemy.health) * 0.26;
     }
   } else {
     enemy.vx = 0;
@@ -479,29 +481,14 @@ function updateEndState(game) {
 export function createGame() {
   return {
     time: 0,
-    player: createMage("player", "Você", ARENA.centerX - 92, ARENA.centerY + 8, COLORS.playerRobe, COLORS.playerGlow),
-    enemy: createMage("enemy", "Rival", ARENA.centerX + 92, ARENA.centerY - 8, COLORS.enemyRobe, COLORS.enemyGlow, true),
+    player: createMage("player", "Você", ARENA.centerX - 106, ARENA.centerY + 8, COLORS.playerRobe, COLORS.playerGlow),
+    enemy: createMage("enemy", "Rival", ARENA.centerX + 106, ARENA.centerY - 8, COLORS.enemyRobe, COLORS.enemyGlow, true),
     crowd: createCrowd(),
     projectiles: [],
     particles: [],
     strikes: [],
     impactFlash: 0,
     shakeTimer: 0,
-  };
-}
-
-export function getSpellPreview(caster, spellName, targetPoint) {
-  const spell = SPELLS[spellName];
-  const cappedTarget = spell.range
-    ? getSpellTargetPoint(caster, spellName, targetPoint)
-    : { x: caster.x, y: caster.y };
-
-  return {
-    x: cappedTarget.x,
-    y: cappedTarget.y,
-    range: spell.range ?? 0,
-    radius: spell.radius ?? spell.auraRadius ?? 0,
-    color: spell.color,
   };
 }
 

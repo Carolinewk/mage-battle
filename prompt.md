@@ -1,1 +1,4 @@
-The characters are too small right now. Let's make the art a lot better, the wizards has to be holding a book, and a wand. for the movements, we have to move it by pressing the right button of the mouse in the map, not by arrows. also, there should be an hitbox marking for the powers, just like in league of legends, so i can see the range of the skills.
+The hitbox art is pretty bad, let's remove it. Also, let's make the wizards a stick man, for now. Also, the arena battle should be bigger.
+
+
+Right now, the wand is too big. Let's make it smaller and pretty! Also the enemy is too good, im having trouble to win over him. Let's make the damage be smaller so i can test for longer

@@ -1,6 +1,5 @@
 import { ARENA, SPELLS, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "./config.js";
 import { angleToVector, clamp } from "./utils.js";
-import { getSpellPreview } from "./game.js";
 
 function textShadow(ctx, text, x, y, color = "#ffffff", align = "left") {
   ctx.textAlign = align;
@@ -23,8 +22,9 @@ function drawBackground(ctx, game) {
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 
+  const arenaHorizon = Math.round(ARENA.centerY + ARENA.radiusY * 0.46);
   ctx.fillStyle = "#0b1422";
-  ctx.fillRect(0, 188, VIRTUAL_WIDTH, VIRTUAL_HEIGHT - 188);
+  ctx.fillRect(0, arenaHorizon, VIRTUAL_WIDTH, VIRTUAL_HEIGHT - arenaHorizon);
 
   drawEllipse(ctx, ARENA.centerX, ARENA.centerY, ARENA.radiusX + 52, ARENA.radiusY + 42);
   ctx.fillStyle = "#122238";
@@ -50,9 +50,17 @@ function drawField(ctx) {
   drawEllipse(ctx, ARENA.centerX, ARENA.centerY, ARENA.radiusX, ARENA.radiusY);
   ctx.clip();
 
-  for (let stripe = 0; stripe < 10; stripe += 1) {
+  const fieldTop = Math.round(ARENA.centerY - ARENA.radiusY);
+  const stripeHeight = 18;
+  const stripeCount = Math.ceil((ARENA.radiusY * 2) / stripeHeight) + 1;
+  for (let stripe = 0; stripe < stripeCount; stripe += 1) {
     ctx.fillStyle = stripe % 2 === 0 ? "#3d7c34" : "#2f652b";
-    ctx.fillRect(ARENA.centerX - ARENA.radiusX, 54 + stripe * 19, ARENA.radiusX * 2, 19);
+    ctx.fillRect(
+      ARENA.centerX - ARENA.radiusX,
+      fieldTop + stripe * stripeHeight,
+      ARENA.radiusX * 2,
+      stripeHeight,
+    );
   }
 
   ctx.strokeStyle = "rgba(230, 247, 255, 0.36)";
@@ -62,7 +70,7 @@ function drawField(ctx) {
   ctx.lineTo(ARENA.centerX, ARENA.centerY + ARENA.radiusY);
   ctx.stroke();
 
-  drawEllipse(ctx, ARENA.centerX, ARENA.centerY, 26, 26);
+  drawEllipse(ctx, ARENA.centerX, ARENA.centerY, 30, 30);
   ctx.stroke();
   ctx.restore();
 
@@ -122,81 +130,13 @@ function drawProjectile(ctx, projectile) {
   ctx.fill();
 }
 
-function drawDashedCircle(ctx, x, y, radius, dashCount, color, alpha = 1, lineWidth = 1) {
-  ctx.save();
+function drawSegment(ctx, startX, startY, endX, endY, color, width = 2) {
   ctx.strokeStyle = color;
-  ctx.globalAlpha = alpha;
-  ctx.lineWidth = lineWidth;
+  ctx.lineWidth = width;
   ctx.beginPath();
-
-  for (let dash = 0; dash < dashCount; dash += 1) {
-    const start = (dash / dashCount) * Math.PI * 2;
-    const end = start + (Math.PI * 2) / dashCount * 0.58;
-    ctx.moveTo(x + Math.cos(start) * radius, y + Math.sin(start) * radius);
-    ctx.arc(x, y, radius, start, end);
-  }
-
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(endX, endY);
   ctx.stroke();
-  ctx.restore();
-}
-
-function drawSpellTelegraphs(ctx, game, input) {
-  const player = game.player;
-  const fireball = getSpellPreview(player, "fireball", input.mouse);
-  const stunShot = getSpellPreview(player, "stunShot", input.mouse);
-  const thunder = getSpellPreview(player, "thunderStrike", input.mouse);
-
-  drawDashedCircle(ctx, player.x, player.y, fireball.range, 36, "#ff9445", 0.22);
-  drawDashedCircle(ctx, player.x, player.y, stunShot.range, 30, "#7ee6ff", 0.22);
-  drawDashedCircle(ctx, player.x, player.y, thunder.range, 42, "#fff09d", 0.18);
-
-  ctx.save();
-  ctx.strokeStyle = "rgba(255, 148, 69, 0.38)";
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  ctx.moveTo(player.x, player.y - 4);
-  ctx.lineTo(fireball.x, fireball.y);
-  ctx.stroke();
-  ctx.fillStyle = "rgba(255, 148, 69, 0.22)";
-  ctx.beginPath();
-  ctx.arc(fireball.x, fireball.y, SPELLS.fireball.radius * 2.1, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.strokeStyle = "rgba(126, 230, 255, 0.48)";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(player.x, player.y - 4);
-  ctx.lineTo(stunShot.x, stunShot.y);
-  ctx.stroke();
-  ctx.strokeStyle = "rgba(126, 230, 255, 0.8)";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(stunShot.x, stunShot.y, SPELLS.stunShot.radius * 2.4, 0, Math.PI * 2);
-  ctx.stroke();
-
-  ctx.fillStyle = "rgba(140, 247, 168, 0.08)";
-  ctx.beginPath();
-  ctx.arc(player.x, player.y, SPELLS.speedBoost.auraRadius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(140, 247, 168, 0.35)";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  ctx.fillStyle = "rgba(255, 240, 157, 0.14)";
-  ctx.beginPath();
-  ctx.arc(thunder.x, thunder.y, thunder.radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255, 240, 157, 0.7)";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  ctx.strokeStyle = "rgba(255, 240, 157, 0.38)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(player.x, player.y);
-  ctx.lineTo(thunder.x, thunder.y);
-  ctx.stroke();
-  ctx.restore();
 }
 
 function drawStrike(ctx, strike, time) {
@@ -257,11 +197,28 @@ function drawMage(ctx, mage, time) {
   const y = Math.round(mage.y + bob);
   const aim = angleToVector(mage.aimAngle);
   const perp = { x: -aim.y, y: aim.x };
-  const bodyTop = y - 9;
-  const bookX = Math.round(x - aim.x * 4 - perp.x * 8);
-  const bookY = Math.round(y - 6 - aim.y * 3 - perp.y * 8);
-  const wandHandX = x + aim.x * 7 + perp.x * 3;
-  const wandHandY = y - 5 + aim.y * 7 + perp.y * 3;
+  const walking = Math.hypot(mage.vx, mage.vy) > 1;
+  const gait = Math.sin(mage.walkCycle * 1.15) * (walking ? 4.2 : 0.7);
+  const sway = Math.cos(mage.walkCycle * 1.15) * (walking ? 2.4 : 0.8);
+  const headX = x;
+  const headY = y - 14;
+  const shoulderX = x;
+  const shoulderY = y - 7;
+  const hipX = x;
+  const hipY = y + 4;
+  const wandHandX = x + aim.x * 9 + perp.x * 2;
+  const wandHandY = shoulderY + aim.y * 8 + perp.y * 2;
+  const wandTipX = wandHandX + aim.x * 9;
+  const wandTipY = wandHandY + aim.y * 9;
+  const wandAccentX = wandHandX + aim.x * 6;
+  const wandAccentY = wandHandY + aim.y * 6;
+  const offHandX = x - aim.x * 3 - perp.x * 6 + sway * 0.35;
+  const offHandY = shoulderY + 1 - aim.y * 2 - perp.y * 4 + sway * 0.45;
+  const leftFootX = x - 5 + gait;
+  const rightFootX = x + 5 - gait;
+  const footY = y + 14;
+  const bodyColor = mage.isEnemy ? "#7b1f22" : "#4c215b";
+  const hatColor = mage.robeColor;
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
   ctx.beginPath();
@@ -276,7 +233,7 @@ function drawMage(ctx, mage, time) {
   }
 
   const trimColor = mage.isEnemy ? "#ffcd93" : "#f8de83";
-  const darkTrim = mage.isEnemy ? "#7b1f22" : "#4c215b";
+  const darkTrim = mage.isEnemy ? "#341014" : "#24112c";
 
   ctx.fillStyle = mage.glowColor;
   ctx.globalAlpha = 0.12;
@@ -285,61 +242,69 @@ function drawMage(ctx, mage, time) {
   ctx.fill();
   ctx.globalAlpha = 1;
 
-  ctx.fillStyle = darkTrim;
-  ctx.fillRect(x - 7, y - 1, 14, 10);
-
-  ctx.fillStyle = mage.robeColor;
-  ctx.fillRect(x - 8, bodyTop, 16, 15);
-  ctx.fillRect(x - 10, y + 4, 20, 4);
-  ctx.fillRect(x - 5, y + 8, 4, 4);
-  ctx.fillRect(x + 1, y + 8, 4, 4);
-
-  ctx.fillStyle = trimColor;
-  ctx.fillRect(x - 1, bodyTop + 3, 2, 10);
-  ctx.fillRect(x - 8, y + 4, 16, 1);
-
-  ctx.fillStyle = darkTrim;
-  ctx.fillRect(x - 9, y - 3, 4, 6);
-  ctx.fillRect(x + 5, y - 3, 4, 6);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
 
   ctx.fillStyle = "#f7d2b0";
-  ctx.fillRect(x - 4, y - 13, 8, 7);
-  ctx.fillRect(Math.round(bookX - 1), Math.round(bookY), 2, 2);
-  ctx.fillRect(Math.round(wandHandX - 1), Math.round(wandHandY), 2, 2);
+  ctx.beginPath();
+  ctx.arc(headX, headY, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = hatColor;
+  ctx.beginPath();
+  ctx.moveTo(headX - 2, headY - 12);
+  ctx.lineTo(headX - 7, headY - 3);
+  ctx.lineTo(headX + 4, headY - 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillRect(headX - 6, headY - 4, 12, 2);
+  ctx.fillStyle = trimColor;
+  ctx.fillRect(headX - 1, headY - 9, 2, 2);
+
+  drawSegment(ctx, shoulderX, shoulderY, hipX, hipY, bodyColor, 3);
+  drawSegment(ctx, shoulderX, shoulderY, offHandX, offHandY, bodyColor, 2.5);
+  drawSegment(ctx, shoulderX, shoulderY, wandHandX, wandHandY, bodyColor, 2.5);
+  drawSegment(ctx, hipX, hipY, leftFootX, footY, bodyColor, 2.5);
+  drawSegment(ctx, hipX, hipY, rightFootX, footY, bodyColor, 2.5);
+
+  ctx.fillStyle = mage.robeColor;
+  ctx.beginPath();
+  ctx.arc(x, y - 1, 3, 0, Math.PI * 2);
+  ctx.fill();
 
   ctx.fillStyle = darkTrim;
-  ctx.fillRect(x - 8, y - 16, 16, 2);
-  ctx.fillRect(x - 5, y - 22, 10, 6);
-  ctx.fillRect(x - 3, y - 28, 6, 6);
-
-  ctx.fillStyle = trimColor;
-  ctx.fillRect(x - 2, y - 25, 1, 2);
-
-  ctx.fillStyle = "#5a3118";
-  ctx.fillRect(bookX - 5, bookY - 3, 10, 7);
-  ctx.fillStyle = "#d8c093";
-  ctx.fillRect(bookX - 4, bookY - 2, 4, 5);
-  ctx.fillRect(bookX + 1, bookY - 2, 3, 5);
-  ctx.fillStyle = "#b58958";
-  ctx.fillRect(bookX, bookY - 3, 1, 7);
-  ctx.fillStyle = "#845331";
-  ctx.fillRect(bookX - 6, bookY - 3, 1, 7);
-
-  ctx.strokeStyle = "#f3e8bf";
-  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(wandHandX, wandHandY);
-  ctx.lineTo(wandHandX + aim.x * 15, wandHandY + aim.y * 15);
-  ctx.stroke();
-
-  ctx.fillStyle = mage.glowColor;
-  ctx.beginPath();
-  ctx.arc(wandHandX + aim.x * 15, wandHandY + aim.y * 15, mage.castFlash > 0 ? 4 : 3, 0, Math.PI * 2);
+  ctx.arc(offHandX, offHandY, 2, 0, Math.PI * 2);
   ctx.fill();
+  ctx.beginPath();
+  ctx.arc(wandHandX, wandHandY, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  drawSegment(ctx, wandHandX, wandHandY, wandTipX, wandTipY, "#6f4725", 2);
+  drawSegment(ctx, wandAccentX, wandAccentY, wandTipX, wandTipY, "#d6b16a", 1.2);
+  ctx.fillStyle = "#efd8a8";
+  ctx.beginPath();
+  ctx.arc(wandHandX, wandHandY, 1.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = mage.castFlash > 0 ? mage.glowColor : trimColor;
+  ctx.beginPath();
+  ctx.arc(wandTipX, wandTipY, mage.castFlash > 0 ? 2.3 : 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  if (mage.castFlash > 0) {
+    ctx.fillStyle = mage.glowColor;
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath();
+    ctx.arc(wandTipX, wandTipY, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
 
   if (mage.hurtFlash > 0) {
     ctx.fillStyle = `rgba(255, 255, 255, ${mage.hurtFlash * 0.6})`;
-    ctx.fillRect(x - 11, y - 29, 22, 42);
+    ctx.fillRect(x - 12, y - 28, 24, 38);
   }
 
   if (mage.stunTimer > 0) {
@@ -476,7 +441,6 @@ export function renderGame(ctx, game, input) {
   ctx.translate(shakeX, shakeY);
   drawGoals(ctx);
   drawField(ctx);
-  drawSpellTelegraphs(ctx, game, input);
   drawMoveTarget(ctx, game.player.moveTarget, game.time);
 
   for (const strike of game.strikes) {

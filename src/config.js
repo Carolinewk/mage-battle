@@ -4,8 +4,8 @@ export const VIRTUAL_HEIGHT = 270;
 export const ARENA = {
   centerX: VIRTUAL_WIDTH / 2,
   centerY: VIRTUAL_HEIGHT / 2 + 10,
-  radiusX: 168,
-  radiusY: 92,
+  radiusX: 186,
+  radiusY: 100,
   safePadding: 12,
 };
 
@@ -22,7 +22,7 @@ export const SPELLS = {
     key: "KeyQ",
     name: "Fireball",
     cooldown: 1,
-    damage: 8,
+    damage: 5,
     speed: 128,
     radius: 4,
     range: 138,
@@ -32,7 +32,7 @@ export const SPELLS = {
     key: "KeyW",
     name: "Stun Shot",
     cooldown: 4,
-    damage: 5,
+    damage: 3,
     speed: 104,
     radius: 4,
     range: 122,
@@ -51,7 +51,7 @@ export const SPELLS = {
     key: "KeyR",
     name: "Thunder Strike",
     cooldown: 10,
-    damage: 20,
+    damage: 12,
     radius: 20,
     range: 148,
     castDelay: 0.45,

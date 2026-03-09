@@ -25,7 +25,8 @@ Depois abra `http://localhost:8000`.
 ## Gameplay
 
 - Os magos agora usam navegação por clique, no estilo arena/MOBA.
-- As skills mostram telegraph/hitbox de alcance e área de impacto.
+- Os magos usam um visual temporário simples em estilo stick figure.
+- A arena do duelo foi ampliada para dar mais espaço de movimentação.
 - Fireball, Stun Shot e Thunder Strike respeitam alcance máximo real.
 
 ## Estrutura
