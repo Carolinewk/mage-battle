@@ -10,6 +10,7 @@ Use um servidor estático simples na pasta do projeto:
 python3 -m http.server 8000
 ```
 
+
 Depois abra `http://localhost:8000`.
 
 ## Publicar no GitHub Pages
