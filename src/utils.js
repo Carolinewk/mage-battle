@@ -78,9 +78,13 @@ export function circleCollision(a, b) {
 export function cooldownBag() {
   return {
     fireball: 0,
+    shockBolt: 0,
     stunShot: 0,
+    blockWall: 0,
     speedBoost: 0,
+    slowShot: 0,
     thunderStrike: 0,
+    immortality: 0,
   };
 }
 

@@ -9,20 +9,143 @@
   <body>
     <main class="app-shell">
       <section class="hud-panel">
-        <div>
-          <p class="eyebrow">Pixel Duel Prototype</p>
+        <div class="title-block">
+          <p class="eyebrow">Clube de Duelo Arcano</p>
           <h1>Mage Battle</h1>
+          <p class="tagline">Um duelo academico em gramado encantado, sob veludo, ouro antigo e luz arcana.</p>
         </div>
         <div class="controls-copy">
-          <p><strong>Movimento</strong>: clique direito no campo</p>
-          <p><strong>Mira</strong>: mouse</p>
-          <p><strong>Magias</strong>: Q fireball, W stun shot, E speed boost, R thunder strike</p>
-          <p><strong>Arena</strong>: campo ampliado para o duelo</p>
-          <p><strong>Reiniciar</strong>: espaço após o duelo</p>
+          <p><strong>Marcha</strong><span>clique direito no campo</span></p>
+          <p><strong>Mira</strong><span>mouse e crosshair arcano</span></p>
+          <p><strong>Grimorio</strong><span>QWER escolhidos no lobby antes do duelo</span></p>
+          <p><strong>Arena</strong><span>campo academico ampliado para trocas mais longas</span></p>
+          <p><strong>Reinicio</strong><span>espaco apos o duelo</span></p>
         </div>
       </section>
       <div class="game-frame">
         <canvas id="game" aria-label="Arena de duelo mágico"></canvas>
+        <button class="frame-button" id="open-lobby" type="button" hidden>Abrir lobby</button>
+        <section class="lobby-overlay" id="lobby">
+          <div class="lobby-card">
+            <p class="eyebrow">Preparacao do Duelista</p>
+            <h2>Monte seu kit academico</h2>
+            <p class="tagline">
+              Escolha as cores do seu visual e uma habilidade para cada tecla antes de entrar na arena.
+            </p>
+            <form class="lobby-grid" id="lobby-form">
+              <fieldset class="lobby-fieldset">
+                <legend>Cor do chapeu</legend>
+                <div class="swatch-grid">
+                  <label class="swatch-option">
+                    <input type="radio" name="hat-color" value="#d4b06a" checked />
+                    <span><i style="--swatch:#d4b06a"></i>Ouro</span>
+                  </label>
+                  <label class="swatch-option">
+                    <input type="radio" name="hat-color" value="#8a3c54" />
+                    <span><i style="--swatch:#8a3c54"></i>Vinho</span>
+                  </label>
+                  <label class="swatch-option">
+                    <input type="radio" name="hat-color" value="#5666a9" />
+                    <span><i style="--swatch:#5666a9"></i>Indigo</span>
+                  </label>
+                  <label class="swatch-option">
+                    <input type="radio" name="hat-color" value="#3f7d5a" />
+                    <span><i style="--swatch:#3f7d5a"></i>Verde</span>
+                  </label>
+                  <label class="swatch-option">
+                    <input type="radio" name="hat-color" value="#c4cad3" />
+                    <span><i style="--swatch:#c4cad3"></i>Prata</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="lobby-fieldset">
+                <legend>Cor da varinha</legend>
+                <div class="swatch-grid">
+                  <label class="swatch-option">
+                    <input type="radio" name="wand-color" value="#7fd6e5" checked />
+                    <span><i style="--swatch:#7fd6e5"></i>Ciano</span>
+                  </label>
+                  <label class="swatch-option">
+                    <input type="radio" name="wand-color" value="#d4b06a" />
+                    <span><i style="--swatch:#d4b06a"></i>Ouro</span>
+                  </label>
+                  <label class="swatch-option">
+                    <input type="radio" name="wand-color" value="#9d7bea" />
+                    <span><i style="--swatch:#9d7bea"></i>Violeta</span>
+                  </label>
+                  <label class="swatch-option">
+                    <input type="radio" name="wand-color" value="#d79857" />
+                    <span><i style="--swatch:#d79857"></i>Ember</span>
+                  </label>
+                  <label class="swatch-option">
+                    <input type="radio" name="wand-color" value="#cbd3db" />
+                    <span><i style="--swatch:#cbd3db"></i>Prata</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="lobby-fieldset">
+                <legend>Q</legend>
+                <div class="ability-grid">
+                  <label class="ability-option">
+                    <input type="radio" name="q-ability" value="fireball" checked />
+                    <span><strong>Fireball</strong><small>projétil avermelhado e direto</small></span>
+                  </label>
+                  <label class="ability-option">
+                    <input type="radio" name="q-ability" value="shockBolt" />
+                    <span><strong>Shock</strong><small>raio azul mais veloz</small></span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="lobby-fieldset">
+                <legend>W</legend>
+                <div class="ability-grid">
+                  <label class="ability-option">
+                    <input type="radio" name="w-ability" value="stunShot" checked />
+                    <span><strong>Stun</strong><small>controle de acerto a distancia</small></span>
+                  </label>
+                  <label class="ability-option">
+                    <input type="radio" name="w-ability" value="blockWall" />
+                    <span><strong>Block</strong><small>ergue uma barreira frontal</small></span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="lobby-fieldset">
+                <legend>E</legend>
+                <div class="ability-grid">
+                  <label class="ability-option">
+                    <input type="radio" name="e-ability" value="speedBoost" checked />
+                    <span><strong>Move Speed</strong><small>ganho rapido de mobilidade</small></span>
+                  </label>
+                  <label class="ability-option">
+                    <input type="radio" name="e-ability" value="slowShot" />
+                    <span><strong>Slow Shot</strong><small>tiro que reduz a velocidade rival</small></span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="lobby-fieldset">
+                <legend>R</legend>
+                <div class="ability-grid">
+                  <label class="ability-option">
+                    <input type="radio" name="r-ability" value="thunderStrike" checked />
+                    <span><strong>Thunder</strong><small>atinge 20% da vida do alvo</small></span>
+                  </label>
+                  <label class="ability-option">
+                    <input type="radio" name="r-ability" value="immortality" />
+                    <span><strong>Immortality</strong><small>fica sem tomar dano por 3 segundos</small></span>
+                  </label>
+                </div>
+              </fieldset>
+            </form>
+            <div class="lobby-actions">
+              <button class="lobby-button" id="start-duel" type="button">Entrar na arena</button>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
     <script type="module" src="./src/main.js"></script>

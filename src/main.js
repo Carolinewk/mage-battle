@@ -4,6 +4,10 @@ import { createInput } from "./input.js";
 import { renderGame } from "./render.js";
 
 const canvas = document.getElementById("game");
+const lobby = document.getElementById("lobby");
+const lobbyForm = document.getElementById("lobby-form");
+const startDuelButton = document.getElementById("start-duel");
+const openLobbyButton = document.getElementById("open-lobby");
 const screen = canvas.getContext("2d");
 screen.imageSmoothingEnabled = false;
 
@@ -14,7 +18,8 @@ const context = buffer.getContext("2d");
 context.imageSmoothingEnabled = false;
 
 const input = createInput(canvas);
-let game = createGame();
+let mode = "lobby";
+let game = null;
 let viewport = {
   x: 0,
   y: 0,
@@ -46,16 +51,60 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
+function readLobbySelection() {
+  const formData = new FormData(lobbyForm);
+  return {
+    hatColor: formData.get("hat-color"),
+    wandColor: formData.get("wand-color"),
+    loadout: {
+      q: formData.get("q-ability"),
+      w: formData.get("w-ability"),
+      e: formData.get("e-ability"),
+      r: formData.get("r-ability"),
+    },
+  };
+}
+
+function showLobby() {
+  mode = "lobby";
+  lobby.hidden = false;
+  openLobbyButton.hidden = true;
+  input.clearMoveTarget();
+  game = createGame(readLobbySelection());
+  previousTime = performance.now();
+}
+
+function startDuel() {
+  mode = "battle";
+  lobby.hidden = true;
+  openLobbyButton.hidden = false;
+  input.clearMoveTarget();
+  game = createGame(readLobbySelection());
+  previousTime = performance.now();
+}
+
+startDuelButton.addEventListener("click", startDuel);
+openLobbyButton.addEventListener("click", showLobby);
+lobbyForm.addEventListener("input", () => {
+  if (mode === "lobby") {
+    game = createGame(readLobbySelection());
+  }
+});
+
 let previousTime = performance.now();
+showLobby();
 
 function frame(now) {
   const dt = Math.min((now - previousTime) / 1000, 1 / 24);
   previousTime = now;
 
-  game = updateGame(game, input, dt);
+  if (mode === "battle") {
+    game = updateGame(game, input, dt);
+  }
+
   renderGame(context, game, input);
 
-  screen.fillStyle = "#050916";
+  screen.fillStyle = "#081018";
   screen.fillRect(0, 0, canvas.width, canvas.height);
   screen.imageSmoothingEnabled = false;
   screen.drawImage(buffer, viewport.x, viewport.y, viewport.width, viewport.height);

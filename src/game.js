@@ -1,4 +1,15 @@
-import { ARENA, COLORS, MAGE_STATS, SPELLS } from "./config.js";
+import {
+  ABILITY_OPTIONS,
+  ABILITY_SLOTS,
+  ARENA,
+  COLORS,
+  DEFAULT_ENEMY_LOADOUT,
+  DEFAULT_ENEMY_STYLE,
+  DEFAULT_PLAYER_LOADOUT,
+  DEFAULT_PLAYER_STYLE,
+  MAGE_STATS,
+  SPELLS,
+} from "./config.js";
 import {
   angleToVector,
   clampPointToDistance,
@@ -12,7 +23,35 @@ import {
   pseudoRandom,
 } from "./utils.js";
 
-function createMage(id, label, x, y, robeColor, glowColor, isEnemy = false) {
+function normalizeLoadout(loadout, defaults) {
+  const nextLoadout = {};
+
+  for (const slot of ABILITY_SLOTS) {
+    const selectedAbility = loadout?.[slot.id];
+    nextLoadout[slot.id] = ABILITY_OPTIONS[slot.id].includes(selectedAbility)
+      ? selectedAbility
+      : defaults[slot.id];
+  }
+
+  return nextLoadout;
+}
+
+function normalizeStyle(style, defaults) {
+  return {
+    hatColor: style?.hatColor ?? defaults.hatColor,
+    wandColor: style?.wandColor ?? defaults.wandColor,
+  };
+}
+
+function selectionFromMage(mage) {
+  return {
+    hatColor: mage.hatColor,
+    wandColor: mage.wandColor,
+    loadout: { ...mage.loadout },
+  };
+}
+
+function createMage(id, label, x, y, robeColor, glowColor, style, loadout, isEnemy = false) {
   return {
     id,
     label,
@@ -28,11 +67,16 @@ function createMage(id, label, x, y, robeColor, glowColor, isEnemy = false) {
     cooldowns: cooldownBag(),
     stunTimer: 0,
     boostTimer: 0,
+    slowTimer: 0,
+    immortalTimer: 0,
     castFlash: 0,
     hurtFlash: 0,
     walkCycle: 0,
     robeColor,
     glowColor,
+    hatColor: style.hatColor,
+    wandColor: style.wandColor,
+    loadout,
     moveTarget: null,
     ai: isEnemy
       ? {
@@ -109,14 +153,18 @@ function handPosition(mage) {
   };
 }
 
-function getSpellTargetPoint(caster, spellName, targetPoint) {
-  const spell = SPELLS[spellName];
+function abilityNeedsSelfTarget(abilityId) {
+  return abilityId === "speedBoost" || abilityId === "immortality";
+}
 
-  if (!spell.range) {
+function getAbilityTargetPoint(caster, abilityId, targetPoint) {
+  const ability = SPELLS[abilityId];
+
+  if (!ability.range) {
     return { x: targetPoint.x, y: targetPoint.y };
   }
 
-  return clampPointToDistance(caster.x, caster.y, targetPoint.x, targetPoint.y, spell.range);
+  return clampPointToDistance(caster.x, caster.y, targetPoint.x, targetPoint.y, ability.range);
 }
 
 function predictTargetPoint(source, target, projectileSpeed, leadFactor = 0.45) {
@@ -128,36 +176,37 @@ function predictTargetPoint(source, target, projectileSpeed, leadFactor = 0.45) 
   };
 }
 
-function spawnProjectile(game, caster, spellName, targetPoint) {
-  const spell = SPELLS[spellName];
-  const cappedTarget = getSpellTargetPoint(caster, spellName, targetPoint);
+function spawnProjectile(game, caster, abilityId, targetPoint) {
+  const ability = SPELLS[abilityId];
+  const cappedTarget = getAbilityTargetPoint(caster, abilityId, targetPoint);
   const castAngle = Math.atan2(cappedTarget.y - caster.y, cappedTarget.x - caster.x);
   const direction = angleToVector(castAngle);
   const hand = handPosition(caster);
 
   caster.aimAngle = castAngle;
-  caster.cooldowns[spellName] = spell.cooldown;
+  caster.cooldowns[abilityId] = ability.cooldown;
   caster.castFlash = 0.28;
 
   game.projectiles.push({
     ownerId: caster.id,
-    type: spellName,
+    abilityId,
+    type: abilityId,
     x: hand.x + direction.x * 5,
     y: hand.y + direction.y * 5,
-    vx: direction.x * spell.speed,
-    vy: direction.y * spell.speed,
-    radius: spell.radius,
-    damage: spell.damage,
-    color: spell.color,
-    travelLeft: spell.range,
+    vx: direction.x * ability.speed,
+    vy: direction.y * ability.speed,
+    radius: ability.radius,
+    damage: ability.damage ?? 0,
+    color: ability.color,
+    travelLeft: ability.range,
   });
 
   burst(
     game,
     hand.x + direction.x * 5,
     hand.y + direction.y * 5,
-    spell.color,
-    spellName === "fireball" ? 5 : 4,
+    ability.color,
+    abilityId === "fireball" ? 6 : 4,
     22,
     2,
     0.22,
@@ -165,30 +214,69 @@ function spawnProjectile(game, caster, spellName, targetPoint) {
 }
 
 function castSpeedBoost(game, caster) {
-  caster.cooldowns.speedBoost = SPELLS.speedBoost.cooldown;
-  caster.boostTimer = SPELLS.speedBoost.duration;
+  const ability = SPELLS.speedBoost;
+  caster.cooldowns.speedBoost = ability.cooldown;
+  caster.boostTimer = ability.duration;
   caster.castFlash = 0.2;
-  burst(game, caster.x, caster.y, "#9effb4", 12, 20, 2, 0.45);
+  burst(game, caster.x, caster.y, ability.color, 12, 20, 2, 0.45);
+}
+
+function castImmortality(game, caster) {
+  const ability = SPELLS.immortality;
+  caster.cooldowns.immortality = ability.cooldown;
+  caster.immortalTimer = ability.duration;
+  caster.castFlash = 0.25;
+  burst(game, caster.x, caster.y, ability.color, 14, 20, 2, 0.5);
+}
+
+function castBlockWall(game, caster) {
+  const ability = SPELLS.blockWall;
+  const direction = angleToVector(caster.aimAngle);
+  const wallCenter = constrainToArena(
+    {
+      x: caster.x + direction.x * ability.wallDistance,
+      y: caster.y + direction.y * ability.wallDistance,
+    },
+    ARENA.safePadding + ability.wallThickness,
+  );
+
+  caster.cooldowns.blockWall = ability.cooldown;
+  caster.castFlash = 0.18;
+  game.walls.push({
+    ownerId: caster.id,
+    x: wallCenter.x,
+    y: wallCenter.y,
+    angle: caster.aimAngle,
+    length: ability.wallLength,
+    thickness: ability.wallThickness,
+    timer: ability.duration,
+    maxTimer: ability.duration,
+    color: ability.color,
+  });
+
+  burst(game, wallCenter.x, wallCenter.y, ability.color, 12, 18, 2, 0.28);
 }
 
 function castThunderStrike(game, caster, targetPoint) {
-  const rangedPoint = getSpellTargetPoint(caster, "thunderStrike", targetPoint);
+  const ability = SPELLS.thunderStrike;
+  const rangedPoint = getAbilityTargetPoint(caster, "thunderStrike", targetPoint);
   const strikePoint = constrainToArena(
     {
       x: rangedPoint.x,
       y: rangedPoint.y,
     },
-    ARENA.safePadding + SPELLS.thunderStrike.radius,
+    ARENA.safePadding + ability.radius,
   );
 
-  caster.cooldowns.thunderStrike = SPELLS.thunderStrike.cooldown;
+  caster.cooldowns.thunderStrike = ability.cooldown;
   caster.castFlash = 0.35;
   game.strikes.push({
     ownerId: caster.id,
+    abilityId: "thunderStrike",
     x: strikePoint.x,
     y: strikePoint.y,
-    radius: SPELLS.thunderStrike.radius,
-    timer: SPELLS.thunderStrike.castDelay,
+    radius: ability.radius,
+    timer: ability.castDelay,
     flashTimer: 0.22,
     resolved: false,
   });
@@ -198,39 +286,55 @@ function canAct(mage) {
   return mage.health > 0 && mage.stunTimer <= 0;
 }
 
-function tryCast(game, caster, spellName, targetPoint) {
-  if (!canAct(caster) || caster.cooldowns[spellName] > 0) {
+function tryCast(game, caster, abilityId, targetPoint) {
+  if (!canAct(caster) || caster.cooldowns[abilityId] > 0) {
     return false;
   }
 
-  if (spellName === "speedBoost") {
+  if (abilityId === "speedBoost") {
     castSpeedBoost(game, caster);
     return true;
   }
 
-  if (spellName === "thunderStrike") {
+  if (abilityId === "immortality") {
+    castImmortality(game, caster);
+    return true;
+  }
+
+  if (abilityId === "blockWall") {
+    castBlockWall(game, caster);
+    return true;
+  }
+
+  if (abilityId === "thunderStrike") {
     castThunderStrike(game, caster, targetPoint);
     return true;
   }
 
-  spawnProjectile(game, caster, spellName, targetPoint);
+  spawnProjectile(game, caster, abilityId, targetPoint);
   return true;
 }
 
 function updateMageTimers(mage, dt) {
   mage.stunTimer = Math.max(0, mage.stunTimer - dt);
   mage.boostTimer = Math.max(0, mage.boostTimer - dt);
+  mage.slowTimer = Math.max(0, mage.slowTimer - dt);
+  mage.immortalTimer = Math.max(0, mage.immortalTimer - dt);
   mage.castFlash = Math.max(0, mage.castFlash - dt);
   mage.hurtFlash = Math.max(0, mage.hurtFlash - dt * 2);
 
-  for (const spellName of Object.keys(mage.cooldowns)) {
-    mage.cooldowns[spellName] = Math.max(0, mage.cooldowns[spellName] - dt);
+  for (const abilityId of Object.keys(mage.cooldowns)) {
+    mage.cooldowns[abilityId] = Math.max(0, mage.cooldowns[abilityId] - dt);
   }
 }
 
 function applyMovement(mage, moveX, moveY, dt) {
   const direction = normalize(moveX, moveY);
-  const speed = mage.boostTimer > 0 ? MAGE_STATS.boostedSpeed : MAGE_STATS.baseSpeed;
+  let speed = mage.boostTimer > 0 ? MAGE_STATS.boostedSpeed : MAGE_STATS.baseSpeed;
+
+  if (mage.slowTimer > 0) {
+    speed *= MAGE_STATS.slowedMultiplier;
+  }
 
   mage.vx = direction.x * speed;
   mage.vy = direction.y * speed;
@@ -261,6 +365,14 @@ function applyMoveTarget(mage, dt) {
   applyMovement(mage, gapX, gapY, dt);
 }
 
+function castTargetForPlayer(player, abilityId, input) {
+  if (abilityNeedsSelfTarget(abilityId)) {
+    return { x: player.x, y: player.y };
+  }
+
+  return { x: input.mouse.x, y: input.mouse.y };
+}
+
 function updatePlayer(game, input, dt) {
   const player = game.player;
 
@@ -280,20 +392,11 @@ function updatePlayer(game, input, dt) {
   if (canAct(player)) {
     applyMoveTarget(player, dt);
 
-    if (input.wasPressed(SPELLS.fireball.key)) {
-      tryCast(game, player, "fireball", { x: input.mouse.x, y: input.mouse.y });
-    }
-
-    if (input.wasPressed(SPELLS.stunShot.key)) {
-      tryCast(game, player, "stunShot", { x: input.mouse.x, y: input.mouse.y });
-    }
-
-    if (input.wasPressed(SPELLS.speedBoost.key)) {
-      tryCast(game, player, "speedBoost", { x: player.x, y: player.y });
-    }
-
-    if (input.wasPressed(SPELLS.thunderStrike.key)) {
-      tryCast(game, player, "thunderStrike", { x: input.mouse.x, y: input.mouse.y });
+    for (const slot of ABILITY_SLOTS) {
+      if (input.wasPressed(slot.key)) {
+        const abilityId = player.loadout[slot.id];
+        tryCast(game, player, abilityId, castTargetForPlayer(player, abilityId, input));
+      }
     }
   } else {
     player.vx = 0;
@@ -310,6 +413,15 @@ function updateEnemy(game, dt) {
     enemy.vy = 0;
     return;
   }
+
+  const qAbilityId = enemy.loadout.q;
+  const wAbilityId = enemy.loadout.w;
+  const eAbilityId = enemy.loadout.e;
+  const rAbilityId = enemy.loadout.r;
+  const qAbility = SPELLS[qAbilityId];
+  const wAbility = SPELLS[wAbilityId];
+  const eAbility = SPELLS[eAbilityId];
+  const rAbility = SPELLS[rAbilityId];
 
   const toPlayerX = player.x - enemy.x;
   const toPlayerY = player.y - enemy.y;
@@ -348,22 +460,39 @@ function updateEnemy(game, dt) {
     applyMovement(enemy, moveX, moveY, dt);
 
     if (enemy.ai.decisionTimer <= 0) {
-      const aimedPoint = predictTargetPoint(enemy, player, SPELLS.fireball.speed, 0.18);
-      const stunPoint = predictTargetPoint(enemy, player, SPELLS.stunShot.speed, 0.08);
+      const aimedPoint = qAbility.speed
+        ? predictTargetPoint(enemy, player, qAbility.speed, qAbilityId === "shockBolt" ? 0.22 : 0.18)
+        : { x: player.x, y: player.y };
+      const controlPoint = wAbility.speed
+        ? predictTargetPoint(enemy, player, wAbility.speed, 0.08)
+        : { x: player.x, y: player.y };
+      const utilityPoint = eAbility.speed
+        ? predictTargetPoint(enemy, player, eAbility.speed, 0.16)
+        : { x: player.x, y: player.y };
       const thunderScatterX = (pseudoRandom(game.time * 19 + enemy.health) - 0.5) * 14;
       const thunderScatterY = (pseudoRandom(game.time * 23 + enemy.health) - 0.5) * 14;
 
-      if (enemy.cooldowns.speedBoost <= 0 && (range > 156 || enemy.health < 30)) {
-        tryCast(game, enemy, "speedBoost", aimedPoint);
-      } else if (enemy.cooldowns.thunderStrike <= 0 && range < 142) {
-        tryCast(game, enemy, "thunderStrike", {
+      if (eAbilityId === "speedBoost" && enemy.cooldowns[eAbilityId] <= 0 && (range > 156 || enemy.health < 30)) {
+        tryCast(game, enemy, eAbilityId, { x: enemy.x, y: enemy.y });
+      } else if (
+        rAbilityId === "immortality" &&
+        enemy.cooldowns[rAbilityId] <= 0 &&
+        enemy.health < enemy.maxHealth * 0.34
+      ) {
+        tryCast(game, enemy, rAbilityId, { x: enemy.x, y: enemy.y });
+      } else if (rAbilityId === "thunderStrike" && enemy.cooldowns[rAbilityId] <= 0 && range < 142) {
+        tryCast(game, enemy, rAbilityId, {
           x: player.x + player.vx * 0.08 + thunderScatterX,
           y: player.y + player.vy * 0.08 + thunderScatterY,
         });
-      } else if (enemy.cooldowns.stunShot <= 0 && player.stunTimer < 0.25) {
-        tryCast(game, enemy, "stunShot", stunPoint);
-      } else if (enemy.cooldowns.fireball <= 0) {
-        tryCast(game, enemy, "fireball", aimedPoint);
+      } else if (wAbilityId === "blockWall" && enemy.cooldowns[wAbilityId] <= 0 && range < 104) {
+        tryCast(game, enemy, wAbilityId, { x: player.x, y: player.y });
+      } else if (wAbilityId === "stunShot" && enemy.cooldowns[wAbilityId] <= 0 && player.stunTimer < 0.25) {
+        tryCast(game, enemy, wAbilityId, controlPoint);
+      } else if (eAbilityId === "slowShot" && enemy.cooldowns[eAbilityId] <= 0) {
+        tryCast(game, enemy, eAbilityId, utilityPoint);
+      } else if (enemy.cooldowns[qAbilityId] <= 0) {
+        tryCast(game, enemy, qAbilityId, aimedPoint);
       }
 
       enemy.ai.decisionTimer = 0.52 + pseudoRandom(game.time * 7 + enemy.health) * 0.26;
@@ -375,9 +504,15 @@ function updateEnemy(game, dt) {
 }
 
 function damageMage(game, target, amount, color) {
+  if (target.immortalTimer > 0) {
+    burst(game, target.x, target.y - 6, "#f5e2b2", 8, 18, 2, 0.22);
+    return false;
+  }
+
   target.health = Math.max(0, target.health - amount);
   target.hurtFlash = 0.35;
   burst(game, target.x, target.y - 4, color, 8, 24, 2, 0.3, 20);
+  return true;
 }
 
 function stunMage(game, target, duration) {
@@ -385,8 +520,53 @@ function stunMage(game, target, duration) {
   burst(game, target.x, target.y - 8, "#b5f4ff", 8, 16, 2, 0.48);
 }
 
+function slowMage(game, target, duration) {
+  target.slowTimer = Math.max(target.slowTimer, duration);
+  burst(game, target.x, target.y - 6, "#8bcf9c", 8, 16, 2, 0.4);
+}
+
+function wallEndpoints(wall) {
+  const direction = angleToVector(wall.angle);
+  const perpendicular = { x: -direction.y, y: direction.x };
+  return {
+    ax: wall.x - perpendicular.x * (wall.length / 2),
+    ay: wall.y - perpendicular.y * (wall.length / 2),
+    bx: wall.x + perpendicular.x * (wall.length / 2),
+    by: wall.y + perpendicular.y * (wall.length / 2),
+  };
+}
+
+function distanceToSegment(px, py, ax, ay, bx, by) {
+  const abX = bx - ax;
+  const abY = by - ay;
+  const lengthSquared = abX * abX + abY * abY;
+
+  if (!lengthSquared) {
+    return distance(px, py, ax, ay);
+  }
+
+  const projection = ((px - ax) * abX + (py - ay) * abY) / lengthSquared;
+  const clampedProjection = Math.max(0, Math.min(1, projection));
+  const closestX = ax + abX * clampedProjection;
+  const closestY = ay + abY * clampedProjection;
+  return distance(px, py, closestX, closestY);
+}
+
+function projectileHitsWall(projectile, wall) {
+  const { ax, ay, bx, by } = wallEndpoints(wall);
+  return distanceToSegment(projectile.x, projectile.y, ax, ay, bx, by) <= projectile.radius + wall.thickness / 2;
+}
+
+function updateWalls(game, dt) {
+  game.walls = game.walls.filter((wall) => {
+    wall.timer -= dt;
+    return wall.timer > 0;
+  });
+}
+
 function updateProjectiles(game, dt) {
   game.projectiles = game.projectiles.filter((projectile) => {
+    const ability = SPELLS[projectile.abilityId];
     const travel = Math.hypot(projectile.vx * dt, projectile.vy * dt);
     projectile.x += projectile.vx * dt;
     projectile.y += projectile.vy * dt;
@@ -397,7 +577,7 @@ function updateProjectiles(game, dt) {
         createParticle(
           projectile.x,
           projectile.y,
-          projectile.type === "fireball" ? "#ffd0a0" : "#d9fbff",
+          projectile.color,
           2,
           0.18,
           -projectile.vx * 0.08,
@@ -406,13 +586,26 @@ function updateProjectiles(game, dt) {
       );
     }
 
+    for (const wall of game.walls) {
+      if (wall.ownerId !== projectile.ownerId && projectileHitsWall(projectile, wall)) {
+        burst(game, projectile.x, projectile.y, wall.color, 8, 18, 2, 0.2);
+        return false;
+      }
+    }
+
     const target = projectile.ownerId === game.player.id ? game.enemy : game.player;
 
     if (target.health > 0 && circleCollision(projectile, target)) {
-      damageMage(game, target, projectile.damage, projectile.color);
+      if (ability.damage) {
+        damageMage(game, target, ability.damage, projectile.color);
+      }
 
-      if (projectile.type === "stunShot") {
-        stunMage(game, target, SPELLS.stunShot.stunDuration);
+      if (ability.stunDuration) {
+        stunMage(game, target, ability.stunDuration);
+      }
+
+      if (ability.slowDuration) {
+        slowMage(game, target, ability.slowDuration);
       }
 
       burst(game, projectile.x, projectile.y, projectile.color, 10, 28, 2, 0.22);
@@ -428,6 +621,7 @@ function updateProjectiles(game, dt) {
 }
 
 function resolveStrike(game, strike) {
+  const ability = SPELLS[strike.abilityId];
   strike.resolved = true;
   strike.flashTimer = 0.3;
   game.impactFlash = 0.22;
@@ -437,10 +631,11 @@ function resolveStrike(game, strike) {
   const hitDistance = distance(strike.x, strike.y, target.x, target.y);
 
   if (target.health > 0 && hitDistance <= strike.radius + target.radius) {
-    damageMage(game, target, SPELLS.thunderStrike.damage, "#fff2a1");
+    const damage = ability.damageRatio ? target.maxHealth * ability.damageRatio : ability.damage;
+    damageMage(game, target, damage, ability.color);
   }
 
-  burst(game, strike.x, strike.y, "#fff5ad", 16, 36, 3, 0.48, 18);
+  burst(game, strike.x, strike.y, ability.color, 16, 36, 3, 0.48, 18);
 }
 
 function updateStrikes(game, dt) {
@@ -478,15 +673,40 @@ function updateEndState(game) {
   }
 }
 
-export function createGame() {
+export function createGame(playerSelection = {}) {
+  const playerLoadout = normalizeLoadout(playerSelection.loadout, DEFAULT_PLAYER_LOADOUT);
+  const playerStyle = normalizeStyle(playerSelection, DEFAULT_PLAYER_STYLE);
+  const enemyLoadout = normalizeLoadout(DEFAULT_ENEMY_LOADOUT, DEFAULT_ENEMY_LOADOUT);
+  const enemyStyle = normalizeStyle(DEFAULT_ENEMY_STYLE, DEFAULT_ENEMY_STYLE);
+
   return {
     time: 0,
-    player: createMage("player", "Você", ARENA.centerX - 106, ARENA.centerY + 8, COLORS.playerRobe, COLORS.playerGlow),
-    enemy: createMage("enemy", "Rival", ARENA.centerX + 106, ARENA.centerY - 8, COLORS.enemyRobe, COLORS.enemyGlow, true),
+    player: createMage(
+      "player",
+      "Você",
+      ARENA.centerX - 106,
+      ARENA.centerY + 8,
+      COLORS.playerRobe,
+      COLORS.playerGlow,
+      playerStyle,
+      playerLoadout,
+    ),
+    enemy: createMage(
+      "enemy",
+      "Rival",
+      ARENA.centerX + 106,
+      ARENA.centerY - 8,
+      COLORS.enemyRobe,
+      COLORS.enemyGlow,
+      enemyStyle,
+      enemyLoadout,
+      true,
+    ),
     crowd: createCrowd(),
     projectiles: [],
     particles: [],
     strikes: [],
+    walls: [],
     impactFlash: 0,
     shakeTimer: 0,
   };
@@ -499,9 +719,10 @@ export function updateGame(game, input, dt) {
     game.shakeTimer = Math.max(0, game.shakeTimer - dt);
     updateParticles(game, dt);
     updateStrikes(game, dt);
+    updateWalls(game, dt);
 
     if (input.wasPressed("Space")) {
-      return createGame();
+      return createGame(selectionFromMage(game.player));
     }
 
     return game;
@@ -515,6 +736,7 @@ export function updateGame(game, input, dt) {
   updateMageTimers(game.enemy, dt);
   updatePlayer(game, input, dt);
   updateEnemy(game, dt);
+  updateWalls(game, dt);
   updateProjectiles(game, dt);
   updateStrikes(game, dt);
   updateParticles(game, dt);
