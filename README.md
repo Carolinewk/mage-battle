@@ -12,6 +12,19 @@ python3 -m http.server 8000
 
 Depois abra `http://localhost:8000`.
 
+## Publicar no GitHub Pages
+
+Este repositório já está pronto para publicar com GitHub Pages via GitHub Actions.
+
+1. Envie estes arquivos para o GitHub.
+2. No repositório, abra `Settings > Pages`.
+3. Em `Source`, selecione `GitHub Actions`.
+4. Faça push para a branch `master` ou `main`.
+
+Depois do workflow rodar, o jogo deve ficar disponível em:
+
+`https://carolinewk.github.io/mage-battle/`
+
 ## Controles
 
 - `Clique direito`: movimentação no campo
