@@ -11,17 +11,40 @@ import {
   SPELLS,
 } from "./config.js";
 import {
-  angleToVector,
   clampPointToDistance,
   circleCollision,
   constrainToArena,
   cooldownBag,
   distance,
+  divideRounded,
+  DIRECTION_SCALE,
   length,
   normalize,
+  ONE_SECOND_MS,
   pointInArena,
-  pseudoRandom,
+  pseudoRandomInt,
+  pseudoRandomSigned,
+  scaleValue,
 } from "./utils.js";
+
+const MAX_WALK_CYCLE = 6283000;
+const WALK_CYCLE_RATE = 120;
+
+const ENEMY_STRAFE_BASE_MS = 800;
+const ENEMY_STRAFE_VARIATION_MS = 500;
+const ENEMY_DECISION_BASE_MS = 520;
+const ENEMY_DECISION_VARIATION_MS = 260;
+
+const PROJECTILE_CAST_FLASH_MS = 280;
+const SELF_CAST_FLASH_MS = 200;
+const IMMORTAL_CAST_FLASH_MS = 250;
+const WALL_CAST_FLASH_MS = 180;
+const STRIKE_CAST_FLASH_MS = 350;
+const STRIKE_FLASH_MS = 300;
+const IMPACT_FLASH_MS = 220;
+const SHAKE_MS = 260;
+const HURT_FLASH_MS = 350;
+const CAST_ANIMATION_MS = 280;
 
 function normalizeLoadout(loadout, defaults) {
   const nextLoadout = {};
@@ -60,8 +83,10 @@ function createMage(id, label, x, y, robeColor, glowColor, style, loadout, isEne
     y,
     vx: 0,
     vy: 0,
+    moveCarryX: 0,
+    moveCarryY: 0,
     radius: MAGE_STATS.radius,
-    aimAngle: isEnemy ? Math.PI : 0,
+    aim: isEnemy ? { x: -DIRECTION_SCALE, y: 0 } : { x: DIRECTION_SCALE, y: 0 },
     health: MAGE_STATS.maxHealth,
     maxHealth: MAGE_STATS.maxHealth,
     cooldowns: cooldownBag(),
@@ -70,6 +95,8 @@ function createMage(id, label, x, y, robeColor, glowColor, style, loadout, isEne
     slowTimer: 0,
     immortalTimer: 0,
     castFlash: 0,
+    castAnimationTimer: 0,
+    castAnimationDuration: CAST_ANIMATION_MS,
     hurtFlash: 0,
     walkCycle: 0,
     robeColor,
@@ -81,8 +108,8 @@ function createMage(id, label, x, y, robeColor, glowColor, style, loadout, isEne
     ai: isEnemy
       ? {
           strafeSign: 1,
-          strafeTimer: 0.75,
-          decisionTimer: 0.85,
+          strafeTimer: 750,
+          decisionTimer: 850,
         }
       : null,
   };
@@ -96,16 +123,16 @@ function createCrowd() {
 
   for (let index = 0; index < 200; index += 1) {
     const angle = (index / 200) * Math.PI * 2;
-    const ringOffset = 0.72 + pseudoRandom(index + 8) * 0.38;
-    const x = ARENA.centerX + Math.cos(angle) * outerX * ringOffset;
-    const y = ARENA.centerY + Math.sin(angle) * outerY * ringOffset * 0.9;
+    const ringOffsetPercent = 720 + pseudoRandomInt(index + 8, 381);
+    const x = ARENA.centerX + Math.round((Math.cos(angle) * outerX * ringOffsetPercent) / 1000);
+    const y = ARENA.centerY + Math.round((Math.sin(angle) * outerY * ringOffsetPercent * 9) / 10000);
 
     spots.push({
       x,
       y,
-      size: pseudoRandom(index + 3) > 0.6 ? 2 : 1,
+      size: pseudoRandomInt(index + 3, 100) >= 60 ? 2 : 1,
       color: colors[index % colors.length],
-      bounce: pseudoRandom(index + 20) * Math.PI * 2,
+      bouncePhase: pseudoRandomInt(index + 20, 6284),
     });
   }
 
@@ -123,38 +150,76 @@ function createParticle(x, y, color, size, lifetime, vx, vy, gravity = 0) {
     vx,
     vy,
     gravity,
+    moveCarryX: 0,
+    moveCarryY: 0,
+    gravityCarryY: 0,
   };
 }
 
-function burst(game, x, y, color, count, speed, size = 2, lifetime = 0.35, gravity = 0) {
+function randomDirection(seed) {
+  let rawX = pseudoRandomSigned(seed + 17, DIRECTION_SCALE);
+  let rawY = pseudoRandomSigned(seed + 53, DIRECTION_SCALE);
+
+  if (!rawX && !rawY) {
+    rawX = DIRECTION_SCALE;
+  }
+
+  return normalize(rawX, rawY, DIRECTION_SCALE);
+}
+
+function burst(game, x, y, color, count, speed, size = 2, lifetime = 350, gravity = 0) {
   for (let index = 0; index < count; index += 1) {
-    const angle = (index / count) * Math.PI * 2 + pseudoRandom(x * 12 + y * 7 + index) * 0.6;
-    const velocity = speed * (0.45 + pseudoRandom(index + x) * 0.7);
-    game.particles.push(
-      createParticle(
-        x,
-        y,
-        color,
-        size,
-        lifetime,
-        Math.cos(angle) * velocity,
-        Math.sin(angle) * velocity,
-        gravity,
-      ),
-    );
+    const seed = x * 97 + y * 53 + index * 131 + game.time;
+    const direction = randomDirection(seed);
+    const velocityPercent = 45 + pseudoRandomInt(seed + 89, 71);
+    const particleSpeed = scaleValue(speed, velocityPercent);
+    const vx = divideRounded(direction.x * particleSpeed, DIRECTION_SCALE);
+    const vy = divideRounded(direction.y * particleSpeed, DIRECTION_SCALE);
+
+    game.particles.push(createParticle(x, y, color, size, lifetime, vx, vy, gravity));
   }
 }
 
+function projectDirection(directionValue, distanceValue) {
+  return divideRounded(directionValue * distanceValue, DIRECTION_SCALE);
+}
+
+function moveEntity(entity, dtMs) {
+  const pendingX = entity.vx * dtMs + entity.moveCarryX;
+  const pendingY = entity.vy * dtMs + entity.moveCarryY;
+  const deltaX = divideRounded(pendingX, ONE_SECOND_MS);
+  const deltaY = divideRounded(pendingY, ONE_SECOND_MS);
+
+  entity.moveCarryX = pendingX - deltaX * ONE_SECOND_MS;
+  entity.moveCarryY = pendingY - deltaY * ONE_SECOND_MS;
+  entity.x += deltaX;
+  entity.y += deltaY;
+}
+
 function handPosition(mage) {
-  const direction = angleToVector(mage.aimAngle);
   return {
-    x: mage.x + direction.x * 10,
-    y: mage.y - 3 + direction.y * 7,
+    x: mage.x + projectDirection(mage.aim.x, 10),
+    y: mage.y - 3 + projectDirection(mage.aim.y, 7),
   };
+}
+
+function setAimTowards(mage, targetX, targetY) {
+  const nextAim = normalize(targetX - mage.x, targetY - mage.y, DIRECTION_SCALE);
+
+  if (nextAim.x || nextAim.y) {
+    mage.aim = nextAim;
+  }
+
+  return mage.aim;
 }
 
 function abilityNeedsSelfTarget(abilityId) {
   return abilityId === "speedBoost" || abilityId === "immortality";
+}
+
+function startCastAnimation(mage) {
+  mage.castAnimationTimer = CAST_ANIMATION_MS;
+  mage.castAnimationDuration = CAST_ANIMATION_MS;
 }
 
 function getAbilityTargetPoint(caster, abilityId, targetPoint) {
@@ -167,86 +232,83 @@ function getAbilityTargetPoint(caster, abilityId, targetPoint) {
   return clampPointToDistance(caster.x, caster.y, targetPoint.x, targetPoint.y, ability.range);
 }
 
-function predictTargetPoint(source, target, projectileSpeed, leadFactor = 0.45) {
+function predictTargetPoint(source, target, projectileSpeed, leadPercent = 45) {
   const gap = distance(source.x, source.y, target.x, target.y);
-  const travelTime = gap / projectileSpeed;
+  const travelMs = divideRounded(gap * ONE_SECOND_MS, projectileSpeed);
+
   return {
-    x: target.x + target.vx * travelTime * leadFactor,
-    y: target.y + target.vy * travelTime * leadFactor,
+    x: target.x + divideRounded(target.vx * travelMs * leadPercent, ONE_SECOND_MS * 100),
+    y: target.y + divideRounded(target.vy * travelMs * leadPercent, ONE_SECOND_MS * 100),
   };
 }
 
 function spawnProjectile(game, caster, abilityId, targetPoint) {
   const ability = SPELLS[abilityId];
   const cappedTarget = getAbilityTargetPoint(caster, abilityId, targetPoint);
-  const castAngle = Math.atan2(cappedTarget.y - caster.y, cappedTarget.x - caster.x);
-  const direction = angleToVector(castAngle);
+  const direction = setAimTowards(caster, cappedTarget.x, cappedTarget.y);
   const hand = handPosition(caster);
+  const spawnX = hand.x + projectDirection(direction.x, 5);
+  const spawnY = hand.y + projectDirection(direction.y, 5);
 
-  caster.aimAngle = castAngle;
   caster.cooldowns[abilityId] = ability.cooldown;
-  caster.castFlash = 0.28;
+  caster.castFlash = PROJECTILE_CAST_FLASH_MS;
+  startCastAnimation(caster);
 
   game.projectiles.push({
     ownerId: caster.id,
     abilityId,
     type: abilityId,
-    x: hand.x + direction.x * 5,
-    y: hand.y + direction.y * 5,
-    vx: direction.x * ability.speed,
-    vy: direction.y * ability.speed,
+    x: spawnX,
+    y: spawnY,
+    vx: divideRounded(direction.x * ability.speed, DIRECTION_SCALE),
+    vy: divideRounded(direction.y * ability.speed, DIRECTION_SCALE),
+    moveCarryX: 0,
+    moveCarryY: 0,
     radius: ability.radius,
     damage: ability.damage ?? 0,
     color: ability.color,
     travelLeft: ability.range,
   });
 
-  burst(
-    game,
-    hand.x + direction.x * 5,
-    hand.y + direction.y * 5,
-    ability.color,
-    abilityId === "fireball" ? 6 : 4,
-    22,
-    2,
-    0.22,
-  );
+  burst(game, spawnX, spawnY, ability.color, abilityId === "fireball" ? 6 : 4, 22, 2, 220);
 }
 
 function castSpeedBoost(game, caster) {
   const ability = SPELLS.speedBoost;
   caster.cooldowns.speedBoost = ability.cooldown;
   caster.boostTimer = ability.duration;
-  caster.castFlash = 0.2;
-  burst(game, caster.x, caster.y, ability.color, 12, 20, 2, 0.45);
+  caster.castFlash = SELF_CAST_FLASH_MS;
+  startCastAnimation(caster);
+  burst(game, caster.x, caster.y, ability.color, 12, 20, 2, 450);
 }
 
 function castImmortality(game, caster) {
   const ability = SPELLS.immortality;
   caster.cooldowns.immortality = ability.cooldown;
   caster.immortalTimer = ability.duration;
-  caster.castFlash = 0.25;
-  burst(game, caster.x, caster.y, ability.color, 14, 20, 2, 0.5);
+  caster.castFlash = IMMORTAL_CAST_FLASH_MS;
+  startCastAnimation(caster);
+  burst(game, caster.x, caster.y, ability.color, 14, 20, 2, 500);
 }
 
 function castBlockWall(game, caster) {
   const ability = SPELLS.blockWall;
-  const direction = angleToVector(caster.aimAngle);
   const wallCenter = constrainToArena(
     {
-      x: caster.x + direction.x * ability.wallDistance,
-      y: caster.y + direction.y * ability.wallDistance,
+      x: caster.x + projectDirection(caster.aim.x, ability.wallDistance),
+      y: caster.y + projectDirection(caster.aim.y, ability.wallDistance),
     },
     ARENA.safePadding + ability.wallThickness,
   );
 
   caster.cooldowns.blockWall = ability.cooldown;
-  caster.castFlash = 0.18;
+  caster.castFlash = WALL_CAST_FLASH_MS;
+  startCastAnimation(caster);
   game.walls.push({
     ownerId: caster.id,
     x: wallCenter.x,
     y: wallCenter.y,
-    angle: caster.aimAngle,
+    direction: { ...caster.aim },
     length: ability.wallLength,
     thickness: ability.wallThickness,
     timer: ability.duration,
@@ -254,7 +316,7 @@ function castBlockWall(game, caster) {
     color: ability.color,
   });
 
-  burst(game, wallCenter.x, wallCenter.y, ability.color, 12, 18, 2, 0.28);
+  burst(game, wallCenter.x, wallCenter.y, ability.color, 12, 18, 2, 280);
 }
 
 function castThunderStrike(game, caster, targetPoint) {
@@ -269,7 +331,8 @@ function castThunderStrike(game, caster, targetPoint) {
   );
 
   caster.cooldowns.thunderStrike = ability.cooldown;
-  caster.castFlash = 0.35;
+  caster.castFlash = STRIKE_CAST_FLASH_MS;
+  startCastAnimation(caster);
   game.strikes.push({
     ownerId: caster.id,
     abilityId: "thunderStrike",
@@ -277,7 +340,7 @@ function castThunderStrike(game, caster, targetPoint) {
     y: strikePoint.y,
     radius: ability.radius,
     timer: ability.castDelay,
-    flashTimer: 0.22,
+    flashTimer: IMPACT_FLASH_MS,
     resolved: false,
   });
 }
@@ -315,36 +378,41 @@ function tryCast(game, caster, abilityId, targetPoint) {
   return true;
 }
 
-function updateMageTimers(mage, dt) {
-  mage.stunTimer = Math.max(0, mage.stunTimer - dt);
-  mage.boostTimer = Math.max(0, mage.boostTimer - dt);
-  mage.slowTimer = Math.max(0, mage.slowTimer - dt);
-  mage.immortalTimer = Math.max(0, mage.immortalTimer - dt);
-  mage.castFlash = Math.max(0, mage.castFlash - dt);
-  mage.hurtFlash = Math.max(0, mage.hurtFlash - dt * 2);
+function updateMageTimers(mage, dtMs) {
+  mage.stunTimer = Math.max(0, mage.stunTimer - dtMs);
+  mage.boostTimer = Math.max(0, mage.boostTimer - dtMs);
+  mage.slowTimer = Math.max(0, mage.slowTimer - dtMs);
+  mage.immortalTimer = Math.max(0, mage.immortalTimer - dtMs);
+  mage.castFlash = Math.max(0, mage.castFlash - dtMs);
+  mage.castAnimationTimer = Math.max(0, mage.castAnimationTimer - dtMs);
+  mage.hurtFlash = Math.max(0, mage.hurtFlash - dtMs * 2);
 
   for (const abilityId of Object.keys(mage.cooldowns)) {
-    mage.cooldowns[abilityId] = Math.max(0, mage.cooldowns[abilityId] - dt);
+    mage.cooldowns[abilityId] = Math.max(0, mage.cooldowns[abilityId] - dtMs);
   }
 }
 
-function applyMovement(mage, moveX, moveY, dt) {
-  const direction = normalize(moveX, moveY);
+function applyMovement(mage, moveX, moveY, dtMs) {
+  const direction = normalize(moveX, moveY, DIRECTION_SCALE);
   let speed = mage.boostTimer > 0 ? MAGE_STATS.boostedSpeed : MAGE_STATS.baseSpeed;
 
   if (mage.slowTimer > 0) {
-    speed *= MAGE_STATS.slowedMultiplier;
+    speed = scaleValue(speed, MAGE_STATS.slowedPercent);
   }
 
-  mage.vx = direction.x * speed;
-  mage.vy = direction.y * speed;
-  mage.x += mage.vx * dt;
-  mage.y += mage.vy * dt;
-  mage.walkCycle += length(mage.vx, mage.vy) * dt * 0.12;
+  mage.vx = divideRounded(direction.x * speed, DIRECTION_SCALE);
+  mage.vy = divideRounded(direction.y * speed, DIRECTION_SCALE);
+  moveEntity(mage, dtMs);
+  mage.walkCycle += divideRounded(length(mage.vx, mage.vy) * dtMs * WALK_CYCLE_RATE, ONE_SECOND_MS);
+
+  if (mage.walkCycle >= MAX_WALK_CYCLE) {
+    mage.walkCycle -= MAX_WALK_CYCLE;
+  }
+
   constrainToArena(mage, ARENA.safePadding + mage.radius);
 }
 
-function applyMoveTarget(mage, dt) {
+function applyMoveTarget(mage, dtMs) {
   if (!mage.moveTarget) {
     mage.vx = 0;
     mage.vy = 0;
@@ -353,7 +421,7 @@ function applyMoveTarget(mage, dt) {
 
   const gapX = mage.moveTarget.x - mage.x;
   const gapY = mage.moveTarget.y - mage.y;
-  const gap = Math.hypot(gapX, gapY);
+  const gap = distance(mage.x, mage.y, mage.moveTarget.x, mage.moveTarget.y);
 
   if (gap <= MAGE_STATS.stopDistance) {
     mage.moveTarget = null;
@@ -362,7 +430,7 @@ function applyMoveTarget(mage, dt) {
     return;
   }
 
-  applyMovement(mage, gapX, gapY, dt);
+  applyMovement(mage, gapX, gapY, dtMs);
 }
 
 function castTargetForPlayer(player, abilityId, input) {
@@ -373,10 +441,10 @@ function castTargetForPlayer(player, abilityId, input) {
   return { x: input.mouse.x, y: input.mouse.y };
 }
 
-function updatePlayer(game, input, dt) {
+function updatePlayer(game, input, dtMs) {
   const player = game.player;
 
-  player.aimAngle = Math.atan2(input.mouse.y - player.y, input.mouse.x - player.x);
+  setAimTowards(player, input.mouse.x, input.mouse.y);
 
   const commandedTarget = input.consumeMoveTarget();
   if (commandedTarget) {
@@ -390,7 +458,7 @@ function updatePlayer(game, input, dt) {
   }
 
   if (canAct(player)) {
-    applyMoveTarget(player, dt);
+    applyMoveTarget(player, dtMs);
 
     for (const slot of ABILITY_SLOTS) {
       if (input.wasPressed(slot.key)) {
@@ -404,7 +472,7 @@ function updatePlayer(game, input, dt) {
   }
 }
 
-function updateEnemy(game, dt) {
+function updateEnemy(game, dtMs) {
   const enemy = game.enemy;
   const player = game.player;
 
@@ -425,16 +493,16 @@ function updateEnemy(game, dt) {
 
   const toPlayerX = player.x - enemy.x;
   const toPlayerY = player.y - enemy.y;
-  const range = Math.hypot(toPlayerX, toPlayerY);
-  const direction = normalize(toPlayerX, toPlayerY);
+  const range = distance(enemy.x, enemy.y, player.x, player.y);
+  const direction = normalize(toPlayerX, toPlayerY, DIRECTION_SCALE);
 
-  enemy.aimAngle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
-  enemy.ai.strafeTimer -= dt;
-  enemy.ai.decisionTimer -= dt;
+  setAimTowards(enemy, player.x, player.y);
+  enemy.ai.strafeTimer -= dtMs;
+  enemy.ai.decisionTimer -= dtMs;
 
   if (enemy.ai.strafeTimer <= 0) {
     enemy.ai.strafeSign *= -1;
-    enemy.ai.strafeTimer = 0.8 + pseudoRandom(game.time * 10) * 0.5;
+    enemy.ai.strafeTimer = ENEMY_STRAFE_BASE_MS + pseudoRandomInt(game.time + enemy.health, ENEMY_STRAFE_VARIATION_MS);
   }
 
   if (canAct(enemy)) {
@@ -453,41 +521,41 @@ function updateEnemy(game, dt) {
     }
 
     if (player.boostTimer > 0 && range < 138) {
-      moveX -= direction.x * 0.65;
-      moveY -= direction.y * 0.65;
+      moveX -= scaleValue(direction.x, 65);
+      moveY -= scaleValue(direction.y, 65);
     }
 
-    applyMovement(enemy, moveX, moveY, dt);
+    applyMovement(enemy, moveX, moveY, dtMs);
 
     if (enemy.ai.decisionTimer <= 0) {
       const aimedPoint = qAbility.speed
-        ? predictTargetPoint(enemy, player, qAbility.speed, qAbilityId === "shockBolt" ? 0.22 : 0.18)
+        ? predictTargetPoint(enemy, player, qAbility.speed, qAbilityId === "shockBolt" ? 22 : 18)
         : { x: player.x, y: player.y };
       const controlPoint = wAbility.speed
-        ? predictTargetPoint(enemy, player, wAbility.speed, 0.08)
+        ? predictTargetPoint(enemy, player, wAbility.speed, 8)
         : { x: player.x, y: player.y };
       const utilityPoint = eAbility.speed
-        ? predictTargetPoint(enemy, player, eAbility.speed, 0.16)
+        ? predictTargetPoint(enemy, player, eAbility.speed, 16)
         : { x: player.x, y: player.y };
-      const thunderScatterX = (pseudoRandom(game.time * 19 + enemy.health) - 0.5) * 14;
-      const thunderScatterY = (pseudoRandom(game.time * 23 + enemy.health) - 0.5) * 14;
+      const thunderScatterX = pseudoRandomSigned(game.time * 19 + enemy.health, 7);
+      const thunderScatterY = pseudoRandomSigned(game.time * 23 + enemy.health, 7);
 
       if (eAbilityId === "speedBoost" && enemy.cooldowns[eAbilityId] <= 0 && (range > 156 || enemy.health < 30)) {
         tryCast(game, enemy, eAbilityId, { x: enemy.x, y: enemy.y });
       } else if (
         rAbilityId === "immortality" &&
         enemy.cooldowns[rAbilityId] <= 0 &&
-        enemy.health < enemy.maxHealth * 0.34
+        enemy.health * 100 < enemy.maxHealth * 34
       ) {
         tryCast(game, enemy, rAbilityId, { x: enemy.x, y: enemy.y });
       } else if (rAbilityId === "thunderStrike" && enemy.cooldowns[rAbilityId] <= 0 && range < 142) {
         tryCast(game, enemy, rAbilityId, {
-          x: player.x + player.vx * 0.08 + thunderScatterX,
-          y: player.y + player.vy * 0.08 + thunderScatterY,
+          x: player.x + divideRounded(player.vx * 8, 100) + thunderScatterX,
+          y: player.y + divideRounded(player.vy * 8, 100) + thunderScatterY,
         });
       } else if (wAbilityId === "blockWall" && enemy.cooldowns[wAbilityId] <= 0 && range < 104) {
         tryCast(game, enemy, wAbilityId, { x: player.x, y: player.y });
-      } else if (wAbilityId === "stunShot" && enemy.cooldowns[wAbilityId] <= 0 && player.stunTimer < 0.25) {
+      } else if (wAbilityId === "stunShot" && enemy.cooldowns[wAbilityId] <= 0 && player.stunTimer < 250) {
         tryCast(game, enemy, wAbilityId, controlPoint);
       } else if (eAbilityId === "slowShot" && enemy.cooldowns[eAbilityId] <= 0) {
         tryCast(game, enemy, eAbilityId, utilityPoint);
@@ -495,7 +563,7 @@ function updateEnemy(game, dt) {
         tryCast(game, enemy, qAbilityId, aimedPoint);
       }
 
-      enemy.ai.decisionTimer = 0.52 + pseudoRandom(game.time * 7 + enemy.health) * 0.26;
+      enemy.ai.decisionTimer = ENEMY_DECISION_BASE_MS + pseudoRandomInt(game.time * 7 + enemy.health, ENEMY_DECISION_VARIATION_MS);
     }
   } else {
     enemy.vx = 0;
@@ -505,90 +573,100 @@ function updateEnemy(game, dt) {
 
 function damageMage(game, target, amount, color) {
   if (target.immortalTimer > 0) {
-    burst(game, target.x, target.y - 6, "#f5e2b2", 8, 18, 2, 0.22);
+    burst(game, target.x, target.y - 6, "#f5e2b2", 8, 18, 2, 220);
     return false;
   }
 
   target.health = Math.max(0, target.health - amount);
-  target.hurtFlash = 0.35;
-  burst(game, target.x, target.y - 4, color, 8, 24, 2, 0.3, 20);
+  target.hurtFlash = HURT_FLASH_MS;
+  burst(game, target.x, target.y - 4, color, 8, 24, 2, 300, 20);
   return true;
 }
 
 function stunMage(game, target, duration) {
   target.stunTimer = Math.max(target.stunTimer, duration);
-  burst(game, target.x, target.y - 8, "#b5f4ff", 8, 16, 2, 0.48);
+  burst(game, target.x, target.y - 8, "#b5f4ff", 8, 16, 2, 480);
 }
 
 function slowMage(game, target, duration) {
   target.slowTimer = Math.max(target.slowTimer, duration);
-  burst(game, target.x, target.y - 6, "#8bcf9c", 8, 16, 2, 0.4);
+  burst(game, target.x, target.y - 6, "#8bcf9c", 8, 16, 2, 400);
 }
 
 function wallEndpoints(wall) {
-  const direction = angleToVector(wall.angle);
-  const perpendicular = { x: -direction.y, y: direction.x };
+  const perpendicularX = -wall.direction.y;
+  const perpendicularY = wall.direction.x;
+  const halfLength = Math.floor(wall.length / 2);
+
   return {
-    ax: wall.x - perpendicular.x * (wall.length / 2),
-    ay: wall.y - perpendicular.y * (wall.length / 2),
-    bx: wall.x + perpendicular.x * (wall.length / 2),
-    by: wall.y + perpendicular.y * (wall.length / 2),
+    ax: wall.x - projectDirection(perpendicularX, halfLength),
+    ay: wall.y - projectDirection(perpendicularY, halfLength),
+    bx: wall.x + projectDirection(perpendicularX, halfLength),
+    by: wall.y + projectDirection(perpendicularY, halfLength),
   };
 }
 
 function distanceToSegment(px, py, ax, ay, bx, by) {
   const abX = bx - ax;
   const abY = by - ay;
-  const lengthSquared = abX * abX + abY * abY;
+  const segmentLengthSquared = abX * abX + abY * abY;
 
-  if (!lengthSquared) {
+  if (!segmentLengthSquared) {
     return distance(px, py, ax, ay);
   }
 
-  const projection = ((px - ax) * abX + (py - ay) * abY) / lengthSquared;
-  const clampedProjection = Math.max(0, Math.min(1, projection));
-  const closestX = ax + abX * clampedProjection;
-  const closestY = ay + abY * clampedProjection;
+  const projection = (px - ax) * abX + (py - ay) * abY;
+
+  if (projection <= 0) {
+    return distance(px, py, ax, ay);
+  }
+
+  if (projection >= segmentLengthSquared) {
+    return distance(px, py, bx, by);
+  }
+
+  const closestX = ax + divideRounded(abX * projection, segmentLengthSquared);
+  const closestY = ay + divideRounded(abY * projection, segmentLengthSquared);
   return distance(px, py, closestX, closestY);
 }
 
 function projectileHitsWall(projectile, wall) {
   const { ax, ay, bx, by } = wallEndpoints(wall);
-  return distanceToSegment(projectile.x, projectile.y, ax, ay, bx, by) <= projectile.radius + wall.thickness / 2;
+  return distanceToSegment(projectile.x, projectile.y, ax, ay, bx, by) <= projectile.radius + divideRounded(wall.thickness, 2);
 }
 
-function updateWalls(game, dt) {
+function updateWalls(game, dtMs) {
   game.walls = game.walls.filter((wall) => {
-    wall.timer -= dt;
+    wall.timer -= dtMs;
     return wall.timer > 0;
   });
 }
 
-function updateProjectiles(game, dt) {
+function updateProjectiles(game, dtMs) {
   game.projectiles = game.projectiles.filter((projectile) => {
     const ability = SPELLS[projectile.abilityId];
-    const travel = Math.hypot(projectile.vx * dt, projectile.vy * dt);
-    projectile.x += projectile.vx * dt;
-    projectile.y += projectile.vy * dt;
+    const travel = divideRounded(length(projectile.vx, projectile.vy) * dtMs, ONE_SECOND_MS);
+
+    moveEntity(projectile, dtMs);
     projectile.travelLeft -= travel;
 
-    if (pseudoRandom(projectile.x + projectile.y + game.time) > 0.38) {
+    if (pseudoRandomInt(projectile.x + projectile.y + game.time, 100) > 38) {
       game.particles.push(
         createParticle(
           projectile.x,
           projectile.y,
           projectile.color,
           2,
-          0.18,
-          -projectile.vx * 0.08,
-          -projectile.vy * 0.08,
+          180,
+          divideRounded(-projectile.vx * 8, 100),
+          divideRounded(-projectile.vy * 8, 100),
         ),
       );
     }
 
     for (const wall of game.walls) {
       if (wall.ownerId !== projectile.ownerId && projectileHitsWall(projectile, wall)) {
-        burst(game, projectile.x, projectile.y, wall.color, 8, 18, 2, 0.2);
+        burst(game, projectile.x, projectile.y, wall.color, 8, 18, 2, 200);
         return false;
       }
     }
@@ -608,7 +686,7 @@ function updateProjectiles(game, dt) {
         slowMage(game, target, ability.slowDuration);
       }
 
-      burst(game, projectile.x, projectile.y, projectile.color, 10, 28, 2, 0.22);
+      burst(game, projectile.x, projectile.y, projectile.color, 10, 28, 2, 220);
       return false;
     }
 
@@ -623,42 +701,48 @@ function updateProjectiles(game, dt) {
 function resolveStrike(game, strike) {
   const ability = SPELLS[strike.abilityId];
   strike.resolved = true;
-  strike.flashTimer = 0.3;
-  game.impactFlash = 0.22;
-  game.shakeTimer = 0.26;
+  strike.flashTimer = STRIKE_FLASH_MS;
+  game.impactFlash = IMPACT_FLASH_MS;
+  game.shakeTimer = SHAKE_MS;
 
   const target = strike.ownerId === game.player.id ? game.enemy : game.player;
   const hitDistance = distance(strike.x, strike.y, target.x, target.y);
 
   if (target.health > 0 && hitDistance <= strike.radius + target.radius) {
-    const damage = ability.damageRatio ? target.maxHealth * ability.damageRatio : ability.damage;
+    const damage = ability.damagePercent ? scaleValue(target.maxHealth, ability.damagePercent) : ability.damage;
     damageMage(game, target, damage, ability.color);
   }
 
-  burst(game, strike.x, strike.y, ability.color, 16, 36, 3, 0.48, 18);
+  burst(game, strike.x, strike.y, ability.color, 16, 36, 3, 480, 18);
 }
 
-function updateStrikes(game, dt) {
+function updateStrikes(game, dtMs) {
   game.strikes = game.strikes.filter((strike) => {
     if (!strike.resolved) {
-      strike.timer -= dt;
+      strike.timer -= dtMs;
       if (strike.timer <= 0) {
         resolveStrike(game, strike);
       }
       return true;
     }
 
-    strike.flashTimer -= dt;
+    strike.flashTimer -= dtMs;
     return strike.flashTimer > 0;
   });
 }
 
-function updateParticles(game, dt) {
+function updateParticles(game, dtMs) {
   game.particles = game.particles.filter((particle) => {
-    particle.lifetime -= dt;
-    particle.vy += particle.gravity * dt;
-    particle.x += particle.vx * dt;
-    particle.y += particle.vy * dt;
+    particle.lifetime -= dtMs;
+
+    if (particle.gravity) {
+      const pendingGravity = particle.gravity * dtMs + particle.gravityCarryY;
+      const gravityStep = divideRounded(pendingGravity, ONE_SECOND_MS);
+      particle.gravityCarryY = pendingGravity - gravityStep * ONE_SECOND_MS;
+      particle.vy += gravityStep;
+    }
+
+    moveEntity(particle, dtMs);
     return particle.lifetime > 0;
   });
 }
@@ -712,14 +796,14 @@ export function createGame(playerSelection = {}) {
   };
 }
 
-export function updateGame(game, input, dt) {
+export function updateGame(game, input, dtMs) {
   if (game.result) {
-    game.time += dt;
-    game.impactFlash = Math.max(0, game.impactFlash - dt);
-    game.shakeTimer = Math.max(0, game.shakeTimer - dt);
-    updateParticles(game, dt);
-    updateStrikes(game, dt);
-    updateWalls(game, dt);
+    game.time += dtMs;
+    game.impactFlash = Math.max(0, game.impactFlash - dtMs);
+    game.shakeTimer = Math.max(0, game.shakeTimer - dtMs);
+    updateParticles(game, dtMs);
+    updateStrikes(game, dtMs);
+    updateWalls(game, dtMs);
 
     if (input.wasPressed("Space")) {
       return createGame(selectionFromMage(game.player));
@@ -728,18 +812,18 @@ export function updateGame(game, input, dt) {
     return game;
   }
 
-  game.time += dt;
-  game.impactFlash = Math.max(0, game.impactFlash - dt);
-  game.shakeTimer = Math.max(0, game.shakeTimer - dt);
+  game.time += dtMs;
+  game.impactFlash = Math.max(0, game.impactFlash - dtMs);
+  game.shakeTimer = Math.max(0, game.shakeTimer - dtMs);
 
-  updateMageTimers(game.player, dt);
-  updateMageTimers(game.enemy, dt);
-  updatePlayer(game, input, dt);
-  updateEnemy(game, dt);
-  updateWalls(game, dt);
-  updateProjectiles(game, dt);
-  updateStrikes(game, dt);
-  updateParticles(game, dt);
+  updateMageTimers(game.player, dtMs);
+  updateMageTimers(game.enemy, dtMs);
+  updatePlayer(game, input, dtMs);
+  updateEnemy(game, dtMs);
+  updateWalls(game, dtMs);
+  updateProjectiles(game, dtMs);
+  updateStrikes(game, dtMs);
+  updateParticles(game, dtMs);
   updateEndState(game);
 
   return game;

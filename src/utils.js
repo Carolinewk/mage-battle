@@ -1,47 +1,81 @@
 import { ARENA } from "./config.js";
 
+export const ONE_SECOND_MS = 1000;
+export const DIRECTION_SCALE = 1024;
+
+const ARENA_CLAMP_SCALE = 1024;
+
 export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function lerp(start, end, amount) {
-  return start + (end - start) * amount;
+export function divideRounded(value, divisor) {
+  if (!divisor) {
+    return 0;
+  }
+
+  const magnitude = Math.abs(value);
+  const halfDivisor = Math.floor(Math.abs(divisor) / 2);
+  const rounded = Math.floor((magnitude + halfDivisor) / Math.abs(divisor));
+  return value < 0 ? -rounded : rounded;
+}
+
+export function scaleValue(value, numerator, denominator = 100) {
+  return divideRounded(value * numerator, denominator);
+}
+
+export function integerSqrt(value) {
+  if (value <= 0) {
+    return 0;
+  }
+
+  let next = value;
+  let current = Math.floor((value + 1) / 2);
+
+  while (current < next) {
+    next = current;
+    current = Math.floor((current + Math.floor(value / current)) / 2);
+  }
+
+  return next;
+}
+
+export function lengthSquared(x, y) {
+  return x * x + y * y;
 }
 
 export function length(x, y) {
-  return Math.hypot(x, y);
+  return integerSqrt(lengthSquared(x, y));
 }
 
-export function normalize(x, y) {
-  const size = Math.hypot(x, y);
+export function normalize(x, y, scale = DIRECTION_SCALE) {
+  const size = length(x, y);
   if (!size) {
     return { x: 0, y: 0 };
   }
 
-  return { x: x / size, y: y / size };
+  return {
+    x: divideRounded(x * scale, size),
+    y: divideRounded(y * scale, size),
+  };
 }
 
 export function distance(ax, ay, bx, by) {
-  return Math.hypot(bx - ax, by - ay);
-}
-
-export function angleToVector(angle) {
-  return { x: Math.cos(angle), y: Math.sin(angle) };
+  return length(bx - ax, by - ay);
 }
 
 export function clampPointToDistance(originX, originY, targetX, targetY, maxDistance) {
   const dx = targetX - originX;
   const dy = targetY - originY;
-  const size = Math.hypot(dx, dy);
+  const size = length(dx, dy);
 
   if (!size || size <= maxDistance) {
     return { x: targetX, y: targetY };
   }
 
-  const scale = maxDistance / size;
   return {
-    x: originX + dx * scale,
-    y: originY + dy * scale,
+    x: originX + divideRounded(dx * maxDistance, size),
+    y: originY + divideRounded(dy * maxDistance, size),
   };
 }
 
@@ -50,7 +84,9 @@ export function pointInArena(x, y, padding = 0) {
   const radiusY = ARENA.radiusY - padding;
   const dx = x - ARENA.centerX;
   const dy = y - ARENA.centerY;
-  return (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY) <= 1;
+  const radiusXSquared = radiusX * radiusX;
+  const radiusYSquared = radiusY * radiusY;
+  return dx * dx * radiusYSquared + dy * dy * radiusXSquared <= radiusXSquared * radiusYSquared;
 }
 
 export function constrainToArena(entity, padding = 0) {
@@ -58,21 +94,25 @@ export function constrainToArena(entity, padding = 0) {
   const radiusY = ARENA.radiusY - padding;
   const dx = entity.x - ARENA.centerX;
   const dy = entity.y - ARENA.centerY;
-  const distanceToEdge = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY);
+  const radiusXSquared = radiusX * radiusX;
+  const radiusYSquared = radiusY * radiusY;
+  const boundary = radiusXSquared * radiusYSquared;
+  const distanceToEdge = dx * dx * radiusYSquared + dy * dy * radiusXSquared;
 
-  if (distanceToEdge <= 1) {
+  if (distanceToEdge <= boundary) {
     return entity;
   }
 
-  const scale = 1 / Math.sqrt(distanceToEdge);
-  entity.x = ARENA.centerX + dx * scale;
-  entity.y = ARENA.centerY + dy * scale;
+  const scaledBoundary = Math.floor((boundary * ARENA_CLAMP_SCALE * ARENA_CLAMP_SCALE) / distanceToEdge);
+  const scale = integerSqrt(scaledBoundary);
+  entity.x = ARENA.centerX + divideRounded(dx * scale, ARENA_CLAMP_SCALE);
+  entity.y = ARENA.centerY + divideRounded(dy * scale, ARENA_CLAMP_SCALE);
   return entity;
 }
 
 export function circleCollision(a, b) {
   const radius = a.radius + b.radius;
-  return distance(a.x, a.y, b.x, b.y) <= radius;
+  return lengthSquared(a.x - b.x, a.y - b.y) <= radius * radius;
 }
 
 export function cooldownBag() {
@@ -89,6 +129,25 @@ export function cooldownBag() {
 }
 
 export function pseudoRandom(seed) {
-  const value = Math.sin(seed * 91.133 + seed * seed * 0.0021) * 43758.5453;
-  return value - Math.floor(value);
+  let value = Math.imul((seed | 0) ^ 0x9e3779b9, 0x85ebca6b);
+  value ^= value >>> 13;
+  value = Math.imul(value, 0xc2b2ae35);
+  value ^= value >>> 16;
+  return value >>> 0;
+}
+
+export function pseudoRandomInt(seed, max) {
+  if (max <= 0) {
+    return 0;
+  }
+
+  return pseudoRandom(seed) % max;
+}
+
+export function pseudoRandomSigned(seed, magnitude) {
+  if (magnitude <= 0) {
+    return 0;
+  }
+
+  return pseudoRandomInt(seed, magnitude * 2 + 1) - magnitude;
 }

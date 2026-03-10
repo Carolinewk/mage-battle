@@ -95,11 +95,11 @@ let previousTime = performance.now();
 showLobby();
 
 function frame(now) {
-  const dt = Math.min((now - previousTime) / 1000, 1 / 24);
+  const dtMs = Math.min(Math.max(0, Math.round(now - previousTime)), 41);
   previousTime = now;
 
   if (mode === "battle") {
-    game = updateGame(game, input, dt);
+    game = updateGame(game, input, dtMs);
   }
 
   renderGame(context, game, input);

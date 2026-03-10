@@ -35,8 +35,8 @@ export function createInput(canvas) {
     const relativeX = clamp((rawX - viewport.x) / viewport.width, 0, 1);
     const relativeY = clamp((rawY - viewport.y) / viewport.height, 0, 1);
 
-    mouse.x = relativeX * VIRTUAL_WIDTH;
-    mouse.y = relativeY * VIRTUAL_HEIGHT;
+    mouse.x = Math.round(relativeX * VIRTUAL_WIDTH);
+    mouse.y = Math.round(relativeY * VIRTUAL_HEIGHT);
     mouse.inside =
       rawX >= viewport.x &&
       rawX <= viewport.x + viewport.width &&

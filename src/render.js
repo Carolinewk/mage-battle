@@ -1,5 +1,5 @@
 import { ABILITY_SLOTS, ARENA, SPELLS, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "./config.js";
-import { angleToVector, clamp } from "./utils.js";
+import { clamp, DIRECTION_SCALE } from "./utils.js";
 
 const THEME = {
   midnight: "#0B1B2B",
@@ -27,6 +27,84 @@ const ABILITY_OVERLAYS = {
   thunderStrike: "rgba(157, 123, 234, 0.24)",
   immortality: "rgba(212, 176, 106, 0.24)",
 };
+
+const PLAYER_SPRITE_DRAW_HEIGHT = 48;
+const PLAYER_SPRITE_BASE_OFFSET = 15;
+const PLAYER_SPRITE_PATHS = [
+  "../sprites/position 1.png",
+  "../sprites/position 2.png",
+  "../sprites/position3.png",
+  "../sprites/position 4.png",
+];
+const PLAYER_SPRITES =
+  typeof Image === "undefined"
+    ? []
+    : PLAYER_SPRITE_PATHS.map((path) => {
+        const image = new Image();
+        image.src = new URL(path, import.meta.url).href;
+        return image;
+      });
+
+function directionToUnit(direction) {
+  return {
+    x: direction.x / DIRECTION_SCALE,
+    y: direction.y / DIRECTION_SCALE,
+  };
+}
+
+function formatCooldown(cooldownMs) {
+  if (cooldownMs >= 1000) {
+    const tenths = Math.ceil(cooldownMs / 100);
+    return `${Math.floor(tenths / 10)}.${tenths % 10}`;
+  }
+
+  const hundredths = Math.ceil(cooldownMs / 10);
+  return `${Math.floor(hundredths / 100)}.${String(hundredths % 100).padStart(2, "0")}`;
+}
+
+function currentPlayerSpriteFrame(mage) {
+  if (mage.castAnimationTimer <= 0 || mage.castAnimationDuration <= 0) {
+    return 0;
+  }
+
+  const activeFrameCount = Math.max(1, PLAYER_SPRITES.length - 1);
+  const elapsed = mage.castAnimationDuration - mage.castAnimationTimer;
+  const activeFrame = Math.min(activeFrameCount - 1, Math.floor((elapsed * activeFrameCount) / mage.castAnimationDuration));
+  return 1 + activeFrame;
+}
+
+function drawPlayerSprite(ctx, mage, x, y) {
+  if (!PLAYER_SPRITES.length) {
+    return false;
+  }
+
+  const frame = PLAYER_SPRITES[currentPlayerSpriteFrame(mage)];
+  if (!frame?.complete || !frame.naturalWidth || !frame.naturalHeight) {
+    return false;
+  }
+
+  const drawHeight = PLAYER_SPRITE_DRAW_HEIGHT;
+  const drawWidth = Math.round((frame.naturalWidth / frame.naturalHeight) * drawHeight);
+  const drawX = Math.round(x - drawWidth / 2);
+  const drawY = y + PLAYER_SPRITE_BASE_OFFSET - drawHeight;
+  const facingLeft = mage.aim.x < 0;
+  const previousSmoothing = ctx.imageSmoothingEnabled;
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+
+  if (facingLeft) {
+    ctx.translate(x, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(frame, -Math.round(drawWidth / 2), drawY, drawWidth, drawHeight);
+  } else {
+    ctx.drawImage(frame, drawX, drawY, drawWidth, drawHeight);
+  }
+
+  ctx.restore();
+  ctx.imageSmoothingEnabled = previousSmoothing;
+  return true;
+}
 
 function textShadow(ctx, text, x, y, color = "#ffffff", align = "left") {
   ctx.textAlign = align;
@@ -169,7 +247,7 @@ function drawSegmentedCircle(ctx, x, y, radius, segments, color, alpha = 1, line
   ctx.restore();
 }
 
-function drawBackground(ctx, game) {
+function drawBackground(ctx, game, time) {
   const sky = ctx.createLinearGradient(0, 0, 0, VIRTUAL_HEIGHT);
   sky.addColorStop(0, "#16243A");
   sky.addColorStop(0.36, THEME.indigo);
@@ -219,7 +297,7 @@ function drawBackground(ctx, game) {
   });
 
   for (const spectator of game.crowd) {
-    const bounce = Math.sin(game.time * 3 + spectator.bounce) * 0.5;
+    const bounce = Math.sin(time * 3 + spectator.bouncePhase / 1000) * 0.5;
     const x = Math.round(spectator.x);
     const y = Math.round(spectator.y + bounce);
     const silhouette = spectator.y > ARENA.centerY ? "#150F0D" : "#17212D";
@@ -245,7 +323,7 @@ function drawBackground(ctx, game) {
     const angle = -0.18 + (lamp / 14) * Math.PI * 2;
     const x = ARENA.centerX + Math.cos(angle) * (ARENA.radiusX + 38);
     const y = ARENA.centerY + Math.sin(angle) * (ARENA.radiusY + 27);
-    drawLantern(ctx, Math.round(x), Math.round(y), game.time, lamp % 2 === 0 ? THEME.gold : THEME.cyan);
+    drawLantern(ctx, Math.round(x), Math.round(y), time, lamp % 2 === 0 ? THEME.gold : THEME.cyan);
   }
 
   fillGlow(ctx, ARENA.centerX, ARENA.centerY, ARENA.radiusX + 42, ARENA.radiusY + 26, THEME.cyan, 0.06);
@@ -403,7 +481,7 @@ function drawStandards(ctx, time) {
 }
 
 function wallEndpoints(wall) {
-  const direction = angleToVector(wall.angle);
+  const direction = directionToUnit(wall.direction);
   const perpendicular = { x: -direction.y, y: direction.x };
   return {
     ax: wall.x - perpendicular.x * (wall.length / 2),
@@ -565,7 +643,7 @@ function drawStrike(ctx, strike, time) {
     return;
   }
 
-  const alpha = clamp(strike.flashTimer / 0.3, 0, 1);
+  const alpha = clamp(strike.flashTimer / 300, 0, 1);
   ctx.save();
   ctx.strokeStyle = `rgba(232, 220, 194, ${alpha})`;
   ctx.lineWidth = 4;
@@ -620,14 +698,15 @@ function drawStunEffect(ctx, mage, time) {
 }
 
 function drawMage(ctx, mage, time) {
-  const bob = Math.sin(mage.walkCycle) * (Math.hypot(mage.vx, mage.vy) > 1 ? 1.3 : 0.35);
+  const walkPhase = mage.walkCycle / 1000;
+  const bob = Math.sin(walkPhase) * (Math.hypot(mage.vx, mage.vy) > 1 ? 1.3 : 0.35);
   const x = Math.round(mage.x);
   const y = Math.round(mage.y + bob);
-  const aim = angleToVector(mage.aimAngle);
+  const aim = directionToUnit(mage.aim);
   const perp = { x: -aim.y, y: aim.x };
   const walking = Math.hypot(mage.vx, mage.vy) > 1;
-  const gait = Math.sin(mage.walkCycle * 1.2) * (walking ? 2.5 : 0.4);
-  const sway = Math.cos(mage.walkCycle * 1.2) * (walking ? 1.8 : 0.6);
+  const gait = Math.sin(walkPhase * 1.2) * (walking ? 2.5 : 0.4);
+  const sway = Math.cos(walkPhase * 1.2) * (walking ? 1.8 : 0.6);
   const wandHandX = x + aim.x * 7 + perp.x * 3;
   const wandHandY = y - 2 + aim.y * 6 + perp.y * 3;
   const wandTipX = wandHandX + aim.x * 8;
@@ -685,6 +764,23 @@ function drawMage(ctx, mage, time) {
   }
 
   fillGlow(ctx, x, y + 1, 15, 13, mage.glowColor, 0.12);
+
+  if (mage.id === "player" && drawPlayerSprite(ctx, mage, x, y)) {
+    if (mage.castFlash > 0) {
+      fillGlow(ctx, x + aim.x * 12, y - 2 + aim.y * 8, 6, 6, mage.glowColor, 0.28);
+    }
+
+    if (mage.hurtFlash > 0) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${clamp(mage.hurtFlash / 350, 0, 1) * 0.45})`;
+      ctx.fillRect(x - 18, y - 28, 36, 46);
+    }
+
+    if (mage.stunTimer > 0) {
+      drawStunEffect(ctx, mage, time);
+    }
+
+    return;
+  }
 
   drawSegment(ctx, rightShoulderX, shoulderY, wandHandX, wandHandY, mantleColor, 2);
   drawSegment(ctx, leftShoulderX, shoulderY, bookX, bookY, mantleColor, 2);
@@ -774,7 +870,7 @@ function drawMage(ctx, mage, time) {
   ctx.fillRect(Math.round(x + 2 - gait), y + 12, 3, 2);
 
   if (mage.hurtFlash > 0) {
-    ctx.fillStyle = `rgba(255, 255, 255, ${mage.hurtFlash * 0.45})`;
+    ctx.fillStyle = `rgba(255, 255, 255, ${clamp(mage.hurtFlash / 350, 0, 1) * 0.45})`;
     ctx.fillRect(x - 12, y - 20, 24, 34);
   }
 
@@ -925,7 +1021,7 @@ function drawCooldowns(ctx, player) {
       ctx.fillRect(slotX + 3, slotY + 3, slotWidth - 6, slotHeight - 6 - (slotHeight - 6) * ratio);
       textShadow(
         ctx,
-        cooldown.toFixed(cooldown >= 1 ? 1 : 2),
+        formatCooldown(cooldown),
         slotX + slotWidth / 2,
         slotY + 15,
         THEME.parchment,
@@ -989,42 +1085,43 @@ function drawOverlay(ctx, game) {
 }
 
 export function renderGame(ctx, game, input) {
+  const time = game.time / 1000;
   ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
   ctx.font = "bold 8px monospace";
-  drawBackground(ctx, game);
+  drawBackground(ctx, game, time);
 
-  const shakeX = game.shakeTimer > 0 ? Math.round(Math.sin(game.time * 70) * 2.6) : 0;
-  const shakeY = game.shakeTimer > 0 ? Math.round(Math.cos(game.time * 55) * 1.8) : 0;
+  const shakeX = game.shakeTimer > 0 ? Math.round(Math.sin(time * 70) * 2.6) : 0;
+  const shakeY = game.shakeTimer > 0 ? Math.round(Math.cos(time * 55) * 1.8) : 0;
 
   ctx.save();
   ctx.translate(shakeX, shakeY);
-  drawField(ctx, game.time);
-  drawStandards(ctx, game.time);
-  drawMoveTarget(ctx, game.player.moveTarget, game.time);
+  drawField(ctx, time);
+  drawStandards(ctx, time);
+  drawMoveTarget(ctx, game.player.moveTarget, time);
 
   for (const wall of game.walls) {
-    drawWall(ctx, wall, game.time);
+    drawWall(ctx, wall, time);
   }
 
   for (const strike of game.strikes) {
-    drawStrike(ctx, strike, game.time);
+    drawStrike(ctx, strike, time);
   }
 
   for (const projectile of game.projectiles) {
     drawProjectile(ctx, projectile);
   }
 
-  drawMage(ctx, game.player, game.time);
-  drawMage(ctx, game.enemy, game.time);
+  drawMage(ctx, game.player, time);
+  drawMage(ctx, game.enemy, time);
   drawParticles(ctx, game.particles);
   ctx.restore();
 
   if (input.mouse.inside && !game.result) {
-    drawCrosshair(ctx, input.mouse, game.time);
+    drawCrosshair(ctx, input.mouse, time);
   }
 
   if (game.impactFlash > 0) {
-    ctx.fillStyle = `rgba(232, 220, 194, ${game.impactFlash * 0.48})`;
+    ctx.fillStyle = `rgba(232, 220, 194, ${clamp(game.impactFlash / 220, 0, 1) * 0.48})`;
     ctx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
   }
 
